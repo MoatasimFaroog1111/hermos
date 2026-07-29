@@ -146,6 +146,9 @@ class PtyBridge:
         spawn_env = (os.environ.copy() if env is None else env.copy())
         if not spawn_env.get("TERM"):
             spawn_env["TERM"] = "xterm-256color"
+        # The dashboard chat is rendered through browser xterm.js, which
+        # requires Hermes' software Unicode bidi reordering for Arabic/RTL.
+        spawn_env.setdefault("TERM_PROGRAM", "vscode")
         proc = ptyprocess.PtyProcess.spawn(  # type: ignore[union-attr]
             list(argv),
             cwd=cwd,

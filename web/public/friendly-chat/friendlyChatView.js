@@ -1,10 +1,7 @@
 import { ConnectionState } from "./contracts.js";
+import { SkyScene } from "./skyScene.js";
 
 const QUICK_PROMPTS = [
-  {
-    title: "اشرح قدراتك",
-    text: "اشرح لي باختصار ما الذي تستطيع تنفيذه داخل هذا المشروع.",
-  },
   {
     title: "افحص المشروع",
     text: "افحص المشروع الحالي وحدد أهم المشكلات والتحسينات المقترحة.",
@@ -16,6 +13,10 @@ const QUICK_PROMPTS = [
   {
     title: "ساعدني في البرمجة",
     text: "ساعدني في كتابة كود نظيف مع شرح الخطوات والملفات التي ستتغير.",
+  },
+  {
+    title: "اشرح قدراتك",
+    text: "اشرح لي باختصار ما الذي تستطيع تنفيذه داخل هذا المشروع.",
   },
 ];
 
@@ -29,6 +30,9 @@ export class FriendlyChatView {
   #latestAssistantId = null;
   #voiceEnabled = false;
   #recognition = null;
+  #skyScene = null;
+  #responseDismissed = false;
+  #messageCount = 0;
 
   constructor({ host, service }) {
     this.#host = host;
@@ -47,19 +51,27 @@ export class FriendlyChatView {
     wrapper.classList.add("friendly-chat-active");
     this.#cacheElements();
     this.#bindActions(wrapper);
+    this.#skyScene = new SkyScene(this.#elements.skyCanvas);
+    this.#skyScene.start();
     this.#unsubscribe = this.#service.subscribe((state) => this.render(state));
   }
 
   dispose() {
     this.#unsubscribe?.();
     this.#recognition?.abort?.();
+    this.#skyScene?.dispose();
     this.#root.remove();
   }
 
   render(state) {
     const status = connectionPresentation(state.connection);
     const conversationTitle = getConversationTitle(state.messages);
+    const hasMessages = state.messages.length > 0;
 
+    if (state.messages.length > this.#messageCount) this.#responseDismissed = false;
+    this.#messageCount = state.messages.length;
+
+    this.#root.dataset.hasMessages = String(hasMessages);
     this.#elements.statusText.textContent = status.text;
     this.#elements.statusDot.dataset.state = status.state;
     this.#elements.activity.textContent = state.activity || "جاهز";
@@ -69,10 +81,9 @@ export class FriendlyChatView {
     this.#elements.send.disabled = state.busy || !state.sessionId;
     this.#elements.stop.hidden = !state.busy;
     this.#elements.newChat.disabled = state.connection !== ConnectionState.OPEN;
-    this.#elements.mobileNewChat.disabled = state.connection !== ConnectionState.OPEN;
-    this.#elements.suggestions.hidden = state.messages.length > 0;
+    this.#elements.suggestions.hidden = hasMessages;
+    this.#elements.messagesPanel.hidden = !hasMessages || this.#responseDismissed;
     this.#elements.conversationTitle.textContent = conversationTitle;
-    this.#elements.sidebarConversation.textContent = conversationTitle;
     this.#renderMessages(state.messages);
 
     const lastAssistant = [...state.messages].reverse().find((item) => item.role === "assistant");
@@ -92,16 +103,15 @@ export class FriendlyChatView {
     const byRole = (role) => this.#root.querySelector(`[data-role="${role}"]`);
     this.#elements = {
       returnButton: byRole("return-simple"),
-      sidebar: byRole("sidebar"),
-      sidebarBackdrop: byRole("sidebar-backdrop"),
-      menu: byRole("menu"),
+      skyCanvas: byRole("sky-canvas"),
+      messagesPanel: byRole("messages-panel"),
       messages: byRole("messages"),
+      responseClose: byRole("response-close"),
       suggestions: byRole("suggestions"),
       composer: byRole("composer"),
       send: byRole("send"),
       stop: byRole("stop"),
       newChat: byRole("new-chat"),
-      mobileNewChat: byRole("mobile-new-chat"),
       advanced: byRole("advanced"),
       mic: byRole("mic"),
       voice: byRole("voice"),
@@ -112,27 +122,21 @@ export class FriendlyChatView {
       errorText: byRole("error-text"),
       reconnect: byRole("reconnect"),
       conversationTitle: byRole("conversation-title"),
-      sidebarConversation: byRole("sidebar-conversation"),
     };
   }
 
   #bindActions(wrapper) {
-    const closeSidebar = () => this.#root.removeAttribute("data-sidebar-open");
-    const toggleSidebar = () => {
-      if (this.#root.hasAttribute("data-sidebar-open")) closeSidebar();
-      else this.#root.setAttribute("data-sidebar-open", "true");
-    };
-
     const focusComposer = () => window.setTimeout(() => this.#elements.composer.focus(), 0);
 
     const startNewConversation = async () => {
-      closeSidebar();
+      this.#responseDismissed = false;
       await this.#service.newConversation();
       focusComposer();
     };
 
     const sendCurrent = async () => {
       const text = this.#elements.composer.value;
+      this.#responseDismissed = false;
       if (!(await this.#service.send(text))) return;
       this.#elements.composer.value = "";
       resizeComposer(this.#elements.composer);
@@ -150,14 +154,15 @@ export class FriendlyChatView {
     });
 
     this.#elements.newChat.addEventListener("click", startNewConversation);
-    this.#elements.mobileNewChat.addEventListener("click", startNewConversation);
     this.#elements.stop.addEventListener("click", () => this.#service.interrupt());
     this.#elements.reconnect.addEventListener("click", () => this.#service.reconnect());
-    this.#elements.menu.addEventListener("click", toggleSidebar);
-    this.#elements.sidebarBackdrop.addEventListener("click", closeSidebar);
+    this.#elements.responseClose.addEventListener("click", () => {
+      this.#responseDismissed = true;
+      this.#elements.messagesPanel.hidden = true;
+      focusComposer();
+    });
 
     this.#elements.advanced.addEventListener("click", () => {
-      closeSidebar();
       wrapper.classList.remove("friendly-chat-active");
       wrapper.classList.add("friendly-chat-advanced");
       this.#root.dataset.mode = "advanced";
@@ -173,7 +178,7 @@ export class FriendlyChatView {
       this.#voiceEnabled = !this.#voiceEnabled;
       this.#elements.voice.dataset.enabled = String(this.#voiceEnabled);
       this.#elements.voice.setAttribute("aria-pressed", String(this.#voiceEnabled));
-      this.#elements.voice.querySelector("span:last-child").textContent = this.#voiceEnabled
+      this.#elements.voice.title = this.#voiceEnabled
         ? "إيقاف قراءة الردود"
         : "قراءة الردود صوتيًا";
       if (!this.#voiceEnabled) window.speechSynthesis?.cancel?.();
@@ -198,11 +203,9 @@ export class FriendlyChatView {
         const label = item.role === "user" ? "أنت" : item.role === "notice" ? "تنبيه" : "Hermes";
         return `
           <article class="hf-message hf-${item.role}" dir="${direction}">
-            <div class="hf-message-inner">
-              <div class="hf-message-label">${label}</div>
-              <div class="hf-message-body">${body}</div>
-              ${item.streaming ? '<span class="hf-streaming" aria-label="جارٍ الكتابة"><i></i><i></i><i></i></span>' : ""}
-            </div>
+            <div class="hf-message-label">${label}</div>
+            <div class="hf-message-body">${body}</div>
+            ${item.streaming ? '<span class="hf-streaming" aria-label="جارٍ الكتابة"><i></i><i></i><i></i></span>' : ""}
           </article>`;
       })
       .join("");
@@ -271,74 +274,70 @@ function template() {
   return `
     <button type="button" class="hf-return" data-role="return-simple">العودة إلى المحادثة</button>
     <div class="hf-shell">
-      <div class="hf-sidebar-backdrop" data-role="sidebar-backdrop"></div>
+      <canvas class="hf-sky-canvas" data-role="sky-canvas" aria-hidden="true"></canvas>
+      <div class="hf-sky-haze" aria-hidden="true"></div>
 
-      <aside class="hf-sidebar" data-role="sidebar" aria-label="قائمة المحادثة">
-        <div class="hf-sidebar-top">
-          <div class="hf-brand"><span class="hf-brand-mark">H</span><strong>Hermes</strong></div>
+      <header class="hf-topbar">
+        <div class="hf-brand" aria-label="Hermes">
+          <span class="hf-brand-diamond">◇</span>
+          <div>
+            <strong>Hermes</strong>
+            <small data-role="conversation-title">محادثة جديدة</small>
+          </div>
+        </div>
+        <div class="hf-top-actions">
+          <div class="hf-connection" title="حالة الاتصال">
+            <span class="hf-status-dot" data-role="status-dot"></span>
+            <span data-role="status-text">جارٍ الاتصال…</span>
+          </div>
+          <button type="button" class="hf-icon-button" data-role="voice" data-enabled="false" aria-pressed="false" title="قراءة الردود صوتيًا">◉</button>
+          <button type="button" class="hf-icon-button" data-role="advanced" title="الوضع المتقدم">⌘</button>
           <button type="button" class="hf-new-chat" data-role="new-chat">＋ محادثة جديدة</button>
         </div>
+      </header>
 
-        <nav class="hf-nav" aria-label="المحادثات">
-          <div class="hf-nav-label">المحادثات</div>
-          <button type="button" class="hf-conversation-item is-active">
-            <span class="hf-nav-icon">◯</span>
-            <span data-role="sidebar-conversation">محادثة جديدة</span>
-          </button>
-        </nav>
+      <main class="hf-stage">
+        <section class="hf-empty" data-role="suggestions">
+          <div class="hf-hero-mark">◇</div>
+          <p class="hf-eyebrow">وكيلك الذكي المتصل بالمشروع</p>
+          <h1>كيف يمكنني مساعدتك؟</h1>
+          <p class="hf-hero-copy">اكتب طلبك بصورة طبيعية، وسيعمل Hermes على تنفيذه عبر الجلسة الآمنة والأدوات المتاحة.</p>
+          <div class="hf-suggestions">${prompts}</div>
+        </section>
 
-        <div class="hf-sidebar-actions">
-          <button type="button" class="hf-sidebar-action" data-role="voice" data-enabled="false" aria-pressed="false">
-            <span>◉</span><span>قراءة الردود صوتيًا</span>
-          </button>
-          <button type="button" class="hf-sidebar-action" data-role="advanced">
-            <span>⌘</span><span>الوضع المتقدم</span>
-          </button>
-        </div>
-
-        <div class="hf-connection">
-          <span class="hf-status-dot" data-role="status-dot"></span>
-          <span data-role="status-text">جارٍ الاتصال…</span>
-        </div>
-      </aside>
-
-      <section class="hf-main">
-        <header class="hf-topbar">
-          <button type="button" class="hf-topbar-button hf-menu" data-role="menu" aria-label="فتح القائمة">☰</button>
-          <div class="hf-title" data-role="conversation-title">محادثة جديدة</div>
-          <button type="button" class="hf-topbar-button hf-mobile-new" data-role="mobile-new-chat" aria-label="محادثة جديدة">＋</button>
-        </header>
-
-        <main class="hf-conversation">
-          <div class="hf-messages" data-role="messages" aria-live="polite"></div>
-          <section class="hf-empty" data-role="suggestions">
-            <div class="hf-empty-logo">H</div>
-            <h1>كيف يمكنني مساعدتك؟</h1>
-            <p>اكتب طلبك بصورة طبيعية، وسيعمل Hermes على تنفيذه خطوة بخطوة.</p>
-            <div class="hf-suggestions">${prompts}</div>
-          </section>
-        </main>
-
-        <div class="hf-error" data-role="error" hidden>
-          <span data-role="error-text"></span>
-          <button type="button" data-role="reconnect">إعادة الاتصال</button>
-        </div>
-
-        <footer class="hf-footer">
-          <div class="hf-composer-shell">
-            <div class="hf-activity" data-role="activity">جارٍ التجهيز…</div>
-            <div class="hf-composer-wrap">
-              <textarea data-role="composer" rows="1" maxlength="20000" placeholder="أرسل رسالة إلى Hermes" aria-label="رسالتك إلى Hermes"></textarea>
-              <div class="hf-composer-actions">
-                <button type="button" class="hf-tool-button hf-mic" data-role="mic" data-listening="false" title="استخدام الميكروفون">◉</button>
-                <button type="button" class="hf-stop" data-role="stop" hidden title="إيقاف التنفيذ">■</button>
-                <button type="button" class="hf-send" data-role="send" aria-label="إرسال الرسالة">↑</button>
-              </div>
+        <section class="hf-response-panel" data-role="messages-panel" hidden>
+          <header class="hf-response-header">
+            <div>
+              <strong>استجابة Hermes</strong>
+              <span data-role="activity">جارٍ التجهيز…</span>
             </div>
-            <div class="hf-hint">قد يخطئ Hermes، لذلك راجع المعلومات المهمة.</div>
+            <button type="button" class="hf-response-close" data-role="response-close" aria-label="إغلاق الاستجابة">×</button>
+          </header>
+          <div class="hf-messages" data-role="messages" aria-live="polite"></div>
+        </section>
+      </main>
+
+      <div class="hf-error" data-role="error" hidden>
+        <span data-role="error-text"></span>
+        <button type="button" data-role="reconnect">إعادة الاتصال</button>
+      </div>
+
+      <footer class="hf-footer">
+        <div class="hf-composer-shell">
+          <div class="hf-composer-wrap">
+            <textarea data-role="composer" rows="1" maxlength="20000" placeholder="اكتب رسالتك هنا..." aria-label="رسالتك إلى Hermes"></textarea>
+            <div class="hf-composer-actions">
+              <button type="button" class="hf-tool-button hf-mic" data-role="mic" data-listening="false" title="استخدام الميكروفون">◉</button>
+              <button type="button" class="hf-stop" data-role="stop" hidden title="إيقاف التنفيذ">■</button>
+              <button type="button" class="hf-send" data-role="send" aria-label="إرسال الرسالة">↑</button>
+            </div>
           </div>
-        </footer>
-      </section>
+          <div class="hf-footer-meta">
+            <span class="hf-activity-mobile" data-role="activity-copy">متصل بخدمة Hermes</span>
+            <span>راجع النتائج المهمة قبل اعتمادها.</span>
+          </div>
+        </div>
+      </footer>
     </div>`;
 }
 
@@ -361,12 +360,12 @@ function getConversationTitle(messages) {
   const firstUserMessage = messages.find((item) => item.role === "user" && item.content?.trim());
   if (!firstUserMessage) return "محادثة جديدة";
   const title = firstUserMessage.content.replace(/\s+/g, " ").trim();
-  return title.length > 42 ? `${title.slice(0, 42)}…` : title;
+  return title.length > 34 ? `${title.slice(0, 34)}…` : title;
 }
 
 function resizeComposer(textarea) {
   textarea.style.height = "auto";
-  textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+  textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
 }
 
 function renderText(value) {

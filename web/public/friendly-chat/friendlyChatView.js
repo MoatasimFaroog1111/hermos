@@ -1,9 +1,22 @@
 import { ConnectionState } from "./contracts.js";
 
 const QUICK_PROMPTS = [
-  "لخّص لي ما تستطيع فعله",
-  "افحص المشروع الحالي واقترح التحسينات",
-  "أنشئ خطة عمل واضحة للمهمة التالية",
+  {
+    title: "اشرح قدراتك",
+    text: "اشرح لي باختصار ما الذي تستطيع تنفيذه داخل هذا المشروع.",
+  },
+  {
+    title: "افحص المشروع",
+    text: "افحص المشروع الحالي وحدد أهم المشكلات والتحسينات المقترحة.",
+  },
+  {
+    title: "أنشئ خطة",
+    text: "أنشئ خطة عمل واضحة ومنظمة للمهمة التي سأرسلها لك.",
+  },
+  {
+    title: "ساعدني في البرمجة",
+    text: "ساعدني في كتابة كود نظيف مع شرح الخطوات والملفات التي ستتغير.",
+  },
 ];
 
 /** Presentation layer. It knows DOM only and delegates every use case. */
@@ -45,16 +58,21 @@ export class FriendlyChatView {
 
   render(state) {
     const status = connectionPresentation(state.connection);
+    const conversationTitle = getConversationTitle(state.messages);
+
     this.#elements.statusText.textContent = status.text;
     this.#elements.statusDot.dataset.state = status.state;
-    this.#elements.activity.textContent = state.activity || "جاهز لاستقبال رسالتك";
+    this.#elements.activity.textContent = state.activity || "جاهز";
     this.#elements.error.hidden = !state.error;
     this.#elements.errorText.textContent = state.error || "";
     this.#elements.reconnect.hidden = state.connection === ConnectionState.OPEN;
     this.#elements.send.disabled = state.busy || !state.sessionId;
     this.#elements.stop.hidden = !state.busy;
     this.#elements.newChat.disabled = state.connection !== ConnectionState.OPEN;
+    this.#elements.mobileNewChat.disabled = state.connection !== ConnectionState.OPEN;
     this.#elements.suggestions.hidden = state.messages.length > 0;
+    this.#elements.conversationTitle.textContent = conversationTitle;
+    this.#elements.sidebarConversation.textContent = conversationTitle;
     this.#renderMessages(state.messages);
 
     const lastAssistant = [...state.messages].reverse().find((item) => item.role === "assistant");
@@ -73,14 +91,17 @@ export class FriendlyChatView {
   #cacheElements() {
     const byRole = (role) => this.#root.querySelector(`[data-role="${role}"]`);
     this.#elements = {
-      shell: byRole("shell"),
       returnButton: byRole("return-simple"),
+      sidebar: byRole("sidebar"),
+      sidebarBackdrop: byRole("sidebar-backdrop"),
+      menu: byRole("menu"),
       messages: byRole("messages"),
       suggestions: byRole("suggestions"),
       composer: byRole("composer"),
       send: byRole("send"),
       stop: byRole("stop"),
       newChat: byRole("new-chat"),
+      mobileNewChat: byRole("mobile-new-chat"),
       advanced: byRole("advanced"),
       mic: byRole("mic"),
       voice: byRole("voice"),
@@ -90,10 +111,26 @@ export class FriendlyChatView {
       error: byRole("error"),
       errorText: byRole("error-text"),
       reconnect: byRole("reconnect"),
+      conversationTitle: byRole("conversation-title"),
+      sidebarConversation: byRole("sidebar-conversation"),
     };
   }
 
   #bindActions(wrapper) {
+    const closeSidebar = () => this.#root.removeAttribute("data-sidebar-open");
+    const toggleSidebar = () => {
+      if (this.#root.hasAttribute("data-sidebar-open")) closeSidebar();
+      else this.#root.setAttribute("data-sidebar-open", "true");
+    };
+
+    const focusComposer = () => window.setTimeout(() => this.#elements.composer.focus(), 0);
+
+    const startNewConversation = async () => {
+      closeSidebar();
+      await this.#service.newConversation();
+      focusComposer();
+    };
+
     const sendCurrent = async () => {
       const text = this.#elements.composer.value;
       if (!(await this.#service.send(text))) return;
@@ -111,11 +148,16 @@ export class FriendlyChatView {
         void sendCurrent();
       }
     });
-    this.#elements.newChat.addEventListener("click", () => this.#service.newConversation());
+
+    this.#elements.newChat.addEventListener("click", startNewConversation);
+    this.#elements.mobileNewChat.addEventListener("click", startNewConversation);
     this.#elements.stop.addEventListener("click", () => this.#service.interrupt());
     this.#elements.reconnect.addEventListener("click", () => this.#service.reconnect());
+    this.#elements.menu.addEventListener("click", toggleSidebar);
+    this.#elements.sidebarBackdrop.addEventListener("click", closeSidebar);
 
     this.#elements.advanced.addEventListener("click", () => {
+      closeSidebar();
       wrapper.classList.remove("friendly-chat-active");
       wrapper.classList.add("friendly-chat-advanced");
       this.#root.dataset.mode = "advanced";
@@ -124,15 +166,15 @@ export class FriendlyChatView {
       wrapper.classList.remove("friendly-chat-advanced");
       wrapper.classList.add("friendly-chat-active");
       this.#root.dataset.mode = "simple";
-      window.setTimeout(() => this.#elements.composer.focus(), 0);
+      focusComposer();
     });
 
     this.#elements.voice.addEventListener("click", () => {
       this.#voiceEnabled = !this.#voiceEnabled;
       this.#elements.voice.dataset.enabled = String(this.#voiceEnabled);
       this.#elements.voice.setAttribute("aria-pressed", String(this.#voiceEnabled));
-      this.#elements.voice.title = this.#voiceEnabled
-        ? "إيقاف قراءة الردود صوتيًا"
+      this.#elements.voice.querySelector("span:last-child").textContent = this.#voiceEnabled
+        ? "إيقاف قراءة الردود"
         : "قراءة الردود صوتيًا";
       if (!this.#voiceEnabled) window.speechSynthesis?.cancel?.();
     });
@@ -143,21 +185,21 @@ export class FriendlyChatView {
       button.addEventListener("click", () => {
         this.#elements.composer.value = button.dataset.prompt || "";
         resizeComposer(this.#elements.composer);
-        this.#elements.composer.focus();
+        focusComposer();
       });
     }
   }
 
   #renderMessages(messages) {
-    const html = messages
+    this.#elements.messages.innerHTML = messages
       .map((item) => {
         const direction = containsArabic(item.content) ? "rtl" : "ltr";
         const body = renderText(item.content || (item.streaming ? "…" : ""));
+        const label = item.role === "user" ? "أنت" : item.role === "notice" ? "تنبيه" : "Hermes";
         return `
           <article class="hf-message hf-${item.role}" dir="${direction}">
-            <div class="hf-avatar" aria-hidden="true">${item.role === "user" ? "أنت" : item.role === "notice" ? "!" : "H"}</div>
-            <div class="hf-bubble">
-              <div class="hf-message-label">${item.role === "user" ? "أنت" : item.role === "notice" ? "تنبيه" : "Hermes"}</div>
+            <div class="hf-message-inner">
+              <div class="hf-message-label">${label}</div>
               <div class="hf-message-body">${body}</div>
               ${item.streaming ? '<span class="hf-streaming" aria-label="جارٍ الكتابة"><i></i><i></i><i></i></span>' : ""}
             </div>
@@ -165,7 +207,6 @@ export class FriendlyChatView {
       })
       .join("");
 
-    this.#elements.messages.innerHTML = html;
     window.requestAnimationFrame(() => {
       this.#elements.messages.scrollTop = this.#elements.messages.scrollHeight;
     });
@@ -220,59 +261,91 @@ export class FriendlyChatView {
 
 function template() {
   const prompts = QUICK_PROMPTS.map(
-    (prompt) => `<button type="button" class="hf-suggestion" data-prompt="${escapeAttribute(prompt)}">${escapeHtml(prompt)}</button>`,
+    ({ title, text }) => `
+      <button type="button" class="hf-suggestion" data-prompt="${escapeAttribute(text)}">
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(text)}</span>
+      </button>`,
   ).join("");
 
   return `
-    <button type="button" class="hf-return" data-role="return-simple" aria-label="العودة للوضع المبسط">✨ الوضع المبسط</button>
-    <div class="hf-shell" data-role="shell">
-      <header class="hf-header">
-        <div class="hf-brand">
-          <div class="hf-logo" aria-hidden="true">☤</div>
-          <div>
-            <h1>Hermes</h1>
-            <div class="hf-status"><span class="hf-status-dot" data-role="status-dot"></span><span data-role="status-text">جارٍ الاتصال…</span></div>
+    <button type="button" class="hf-return" data-role="return-simple">العودة إلى المحادثة</button>
+    <div class="hf-shell">
+      <div class="hf-sidebar-backdrop" data-role="sidebar-backdrop"></div>
+
+      <aside class="hf-sidebar" data-role="sidebar" aria-label="قائمة المحادثة">
+        <div class="hf-sidebar-top">
+          <div class="hf-brand"><span class="hf-brand-mark">H</span><strong>Hermes</strong></div>
+          <button type="button" class="hf-new-chat" data-role="new-chat">＋ محادثة جديدة</button>
+        </div>
+
+        <nav class="hf-nav" aria-label="المحادثات">
+          <div class="hf-nav-label">المحادثات</div>
+          <button type="button" class="hf-conversation-item is-active">
+            <span class="hf-nav-icon">◯</span>
+            <span data-role="sidebar-conversation">محادثة جديدة</span>
+          </button>
+        </nav>
+
+        <div class="hf-sidebar-actions">
+          <button type="button" class="hf-sidebar-action" data-role="voice" data-enabled="false" aria-pressed="false">
+            <span>◉</span><span>قراءة الردود صوتيًا</span>
+          </button>
+          <button type="button" class="hf-sidebar-action" data-role="advanced">
+            <span>⌘</span><span>الوضع المتقدم</span>
+          </button>
+        </div>
+
+        <div class="hf-connection">
+          <span class="hf-status-dot" data-role="status-dot"></span>
+          <span data-role="status-text">جارٍ الاتصال…</span>
+        </div>
+      </aside>
+
+      <section class="hf-main">
+        <header class="hf-topbar">
+          <button type="button" class="hf-topbar-button hf-menu" data-role="menu" aria-label="فتح القائمة">☰</button>
+          <div class="hf-title" data-role="conversation-title">محادثة جديدة</div>
+          <button type="button" class="hf-topbar-button hf-mobile-new" data-role="mobile-new-chat" aria-label="محادثة جديدة">＋</button>
+        </header>
+
+        <main class="hf-conversation">
+          <div class="hf-messages" data-role="messages" aria-live="polite"></div>
+          <section class="hf-empty" data-role="suggestions">
+            <div class="hf-empty-logo">H</div>
+            <h1>كيف يمكنني مساعدتك؟</h1>
+            <p>اكتب طلبك بصورة طبيعية، وسيعمل Hermes على تنفيذه خطوة بخطوة.</p>
+            <div class="hf-suggestions">${prompts}</div>
+          </section>
+        </main>
+
+        <div class="hf-error" data-role="error" hidden>
+          <span data-role="error-text"></span>
+          <button type="button" data-role="reconnect">إعادة الاتصال</button>
+        </div>
+
+        <footer class="hf-footer">
+          <div class="hf-composer-shell">
+            <div class="hf-activity" data-role="activity">جارٍ التجهيز…</div>
+            <div class="hf-composer-wrap">
+              <textarea data-role="composer" rows="1" maxlength="20000" placeholder="أرسل رسالة إلى Hermes" aria-label="رسالتك إلى Hermes"></textarea>
+              <div class="hf-composer-actions">
+                <button type="button" class="hf-tool-button hf-mic" data-role="mic" data-listening="false" title="استخدام الميكروفون">◉</button>
+                <button type="button" class="hf-stop" data-role="stop" hidden title="إيقاف التنفيذ">■</button>
+                <button type="button" class="hf-send" data-role="send" aria-label="إرسال الرسالة">↑</button>
+              </div>
+            </div>
+            <div class="hf-hint">قد يخطئ Hermes، لذلك راجع المعلومات المهمة.</div>
           </div>
-        </div>
-        <div class="hf-header-actions">
-          <button type="button" class="hf-icon-button" data-role="voice" data-enabled="false" aria-pressed="false" title="قراءة الردود صوتيًا">🔊</button>
-          <button type="button" class="hf-secondary-button" data-role="new-chat">＋ محادثة جديدة</button>
-          <button type="button" class="hf-secondary-button" data-role="advanced">⌘ الوضع المتقدم</button>
-        </div>
-      </header>
-
-      <main class="hf-conversation">
-        <div class="hf-messages" data-role="messages" aria-live="polite"></div>
-        <section class="hf-empty" data-role="suggestions">
-          <div class="hf-orb">✦</div>
-          <h2>كيف أستطيع مساعدتك؟</h2>
-          <p>تحدث مع وكيلك مباشرة، اطلب منه تنفيذ المهام، تحليل الملفات أو العمل على مشاريعك.</p>
-          <div class="hf-suggestions">${prompts}</div>
-        </section>
-      </main>
-
-      <div class="hf-error" data-role="error" hidden>
-        <span data-role="error-text"></span>
-        <button type="button" data-role="reconnect">إعادة الاتصال</button>
-      </div>
-
-      <footer class="hf-footer">
-        <div class="hf-activity"><span class="hf-pulse"></span><span data-role="activity">جارٍ التجهيز…</span></div>
-        <div class="hf-composer-wrap">
-          <button type="button" class="hf-icon-button hf-mic" data-role="mic" data-listening="false" title="إرسال رسالة صوتية">🎙️</button>
-          <textarea data-role="composer" rows="1" maxlength="20000" placeholder="اكتب رسالتك إلى Hermes…" aria-label="رسالتك إلى Hermes"></textarea>
-          <button type="button" class="hf-stop" data-role="stop" hidden title="إيقاف التنفيذ">■</button>
-          <button type="button" class="hf-send" data-role="send" aria-label="إرسال الرسالة">➤</button>
-        </div>
-        <div class="hf-hint">Enter للإرسال · Shift + Enter لسطر جديد</div>
-      </footer>
+        </footer>
+      </section>
     </div>`;
 }
 
 function connectionPresentation(state) {
   switch (state) {
     case ConnectionState.OPEN:
-      return { state: "open", text: "متصل وجاهز" };
+      return { state: "open", text: "متصل" };
     case ConnectionState.CONNECTING:
       return { state: "connecting", text: "جارٍ الاتصال" };
     case ConnectionState.ERROR:
@@ -284,9 +357,16 @@ function connectionPresentation(state) {
   }
 }
 
+function getConversationTitle(messages) {
+  const firstUserMessage = messages.find((item) => item.role === "user" && item.content?.trim());
+  if (!firstUserMessage) return "محادثة جديدة";
+  const title = firstUserMessage.content.replace(/\s+/g, " ").trim();
+  return title.length > 42 ? `${title.slice(0, 42)}…` : title;
+}
+
 function resizeComposer(textarea) {
   textarea.style.height = "auto";
-  textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+  textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
 }
 
 function renderText(value) {

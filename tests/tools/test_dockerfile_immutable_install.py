@@ -29,7 +29,10 @@ def test_dockerfile_keeps_mutable_state_under_opt_data() -> None:
 
     assert "ENV HERMES_HOME=/opt/data" in text
     assert "ENV HERMES_WRITE_SAFE_ROOT=/opt/data" in text
-    assert 'VOLUME [ "/opt/data" ]' in text
+    # The image must provision the writable state root. Whether deployment
+    # declares it as a Docker-managed VOLUME or supplies a platform mount is
+    # an orchestration concern and must not change this image-level contract.
+    assert "RUN mkdir -p /opt/data" in text
 
 
 def test_dockerfile_disables_runtime_install_mutations() -> None:

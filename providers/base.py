@@ -5,34 +5,20 @@ auth, endpoints, client quirks, request-time quirks. The transport reads this
 instead of receiving 20+ boolean flags.
 
 Provider profiles are DECLARATIVE — they describe the provider's behavior.
-They do NOT own client construction, credential rotation, or streaming.
-Those stay on AIAgent.
+They do NOT own client construction, credential rotation, streaming, or model
+catalog I/O. Live model discovery is delegated to ``ModelCatalogClient``.
 """
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from providers.model_catalog import ModelCatalogClient
 
 # Sentinel for "omit temperature entirely" (Kimi: server manages it)
 OMIT_TEMPERATURE = object()
-
-
-def _profile_user_agent() -> str:
-    """Return a ``hermes-cli/<version>`` UA string, with a stable fallback.
-
-    Used by ``ProviderProfile.fetch_models`` so the catalog probe is not
-    served the default ``Python-urllib/<ver>`` UA — some providers
-    (OpenCode Zen, etc.) sit behind a WAF that returns 403 for that.
-    """
-    try:
-        from hermes_cli import __version__ as _ver  # lazy: avoid layer cycle at import time
-        return f"hermes-cli/{_ver}"
-    except Exception:
-        return "hermes-cli"
 
 
 @dataclass
@@ -93,6 +79,16 @@ class ProviderProfile:
     )
     # empty = use main model
 
+    # ── Infrastructure ports ─────────────────────────────────
+    # Optional injection point used by tests, embedders, and alternate
+    # composition roots. Excluded from repr/equality so the profile remains a
+    # declarative value object for normal callers.
+    catalog_client: ModelCatalogClient | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+
     # ── Hooks (override in subclass for complex providers) ───
 
     def get_hostname(self) -> str:
@@ -105,6 +101,7 @@ class ProviderProfile:
             return self.hostname
         if self.base_url:
             from urllib.parse import urlparse
+
             return urlparse(self.base_url).hostname or ""
         return ""
 
@@ -179,54 +176,30 @@ class ProviderProfile:
         base_url: str | None = None,
         timeout: float = 8.0,
     ) -> list[str] | None:
-        """Fetch the live model list from the provider's models endpoint.
+        """Fetch the live model list through the configured catalog port.
 
-        Returns a list of model ID strings, or None if the fetch failed or
-        the provider does not support live model listing.
+        Compatibility is unchanged for callers and subclasses: ``models_url``
+        still wins, followed by the caller-provided ``base_url``, then the
+        profile's own ``base_url``. The default adapter sends Bearer auth and
+        ``default_headers`` and preserves credential-safe redirect handling.
 
-        Resolution order for the endpoint URL:
-          1. self.models_url  (explicit override — use when the models
-             endpoint differs from the inference base URL, e.g. OpenRouter
-             exposes a public catalog at /api/v1/models while inference is
-             at /api/v1)
-          2. base_url (caller override — user-configured model.base_url)
-          3. self.base_url + "/models"  (standard OpenAI-compat fallback)
-
-        The default implementation sends Bearer auth when api_key is given
-        and forwards self.default_headers. Override to customise auth, path,
-        response shape, or to return None for providers with no REST catalog.
-
-        Callers must always fall back to the static _PROVIDER_MODELS list
-        when this returns None.
+        A custom ``catalog_client`` may be injected at construction time for
+        alternate transports or deterministic tests. Callers must still fall
+        back to their static model lists when this method returns ``None``.
         """
-        effective_base = base_url or self.base_url
-        url = (self.models_url or "").strip()
-        if not url:
-            if not effective_base:
-                return None
-            url = effective_base.rstrip("/") + "/models"
+        from providers.model_catalog import (
+            DEFAULT_MODEL_CATALOG_CLIENT,
+            ModelCatalogRequest,
+        )
 
-        import json
-        import urllib.request
-
-        from hermes_cli.urllib_security import open_credentialed_url
-
-        req = urllib.request.Request(url)
-        if api_key:
-            req.add_header("Authorization", f"Bearer {api_key}")
-        req.add_header("Accept", "application/json")
-        # Some providers (e.g. OpenCode Zen) sit behind a WAF that blocks
-        # the default ``Python-urllib/<ver>`` User-Agent.  Set a generic
-        # hermes-cli UA so the catalog endpoint is reachable.
-        req.add_header("User-Agent", _profile_user_agent())
-        for k, v in self.default_headers.items():
-            req.add_header(k, v)
-
-        try:
-            with open_credentialed_url(req, timeout=timeout) as resp:
-                data = json.loads(resp.read().decode())
-            items = data if isinstance(data, list) else data.get("data", [])
-            return [m["id"] for m in items if isinstance(m, dict) and "id" in m]
-        except Exception as exc:
-            logger.debug("fetch_models(%s): %s", self.name, exc)
-            return None
+        client = self.catalog_client or DEFAULT_MODEL_CATALOG_CLIENT
+        return client.fetch_models(
+            ModelCatalogRequest(
+                provider_name=self.name,
+                base_url=base_url or self.base_url,
+                models_url=self.models_url,
+                api_key=api_key,
+                default_headers=self.default_headers,
+                timeout=timeout,
+            )
+        )

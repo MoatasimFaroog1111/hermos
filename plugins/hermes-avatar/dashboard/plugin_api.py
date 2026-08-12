@@ -12,6 +12,7 @@ import json
 import os
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
@@ -75,7 +76,17 @@ def _avatar_model_url() -> str:
     value = (os.getenv("HERMES_AVATAR_GLB_URL") or "").strip()
     if not value:
         return ""
-    if value.startswith("/") or value.startswith("https://"):
+
+    # A single leading slash is same-origin. Protocol-relative URLs (`//host`)
+    # and backslashes are rejected because browsers can normalize them into a
+    # cross-origin URL even though the raw string appears path-like.
+    if value.startswith("/"):
+        if value.startswith("//") or "\\" in value:
+            return ""
+        return value
+
+    parsed = urllib.parse.urlsplit(value)
+    if parsed.scheme == "https" and parsed.netloc:
         return value
     return ""
 

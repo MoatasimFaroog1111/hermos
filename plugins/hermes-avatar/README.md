@@ -19,11 +19,16 @@ Digital Human v0.4 makes real GLB characters usable directly from the dashboard:
 - The browser retrieves protected models with the Dashboard SDK's
   `authedFetch`, converts them to a Blob URL, then hands that URL to Three.js.
   This works with both gated-cookie and loopback session-token authentication.
+- Replacing an uploaded model changes an `mtime + size` revision in the model
+  URL, so React immediately recreates the renderer even though the API path is
+  otherwise stable.
 - **REMOVE GLB** deletes the uploaded avatar and immediately falls back to a
   configured model URL or the built-in procedural human.
 - `HERMES_AVATAR_GLB_URL` remains available for operator-managed deployments.
 - Three.js and `GLTFLoader` are still lazy-loaded through Plugin SDK 1.2; no CDN
   or new npm dependency is introduced.
+- v0.4 adds a small responsive stylesheet layer so avatar-management buttons
+  wrap safely on phones without changing the chat composer's layout contract.
 
 ## Architecture
 
@@ -161,12 +166,14 @@ dashboard/
 ├── plugin_api.py
 └── dist/
     ├── avatar-v4.js
+    ├── avatar-v4.css
     ├── three-avatar-renderer.js
     └── realistic.css
 ```
 
-Superseded v0.2/v0.3 JavaScript entries are removed. The existing responsive
-stylesheet is intentionally reused by v0.4.
+`avatar-v4.css` imports the established `realistic.css` visual contract and
+adds only the v0.4 avatar-management responsive overrides. Superseded v0.2/v0.3
+JavaScript entries are removed.
 
 ## Validation
 
@@ -176,9 +183,10 @@ The feature has a dedicated smoke-test module:
 tests/hermes_cli/test_digital_human_plugin.py
 ```
 
-It checks the manifest/runtime contract, lazy Three.js SDK boundary, morph
-mapping markers, safe configured-URL validation, a real minimal GLB upload/get/
-delete lifecycle in an isolated `HERMES_HOME`, and rejection of non-GLB data.
+It checks the manifest/runtime contract, responsive v0.4 stylesheet layer,
+lazy Three.js SDK boundary, morph mapping markers, safe configured-URL
+validation, a real minimal GLB upload/replace/get/delete lifecycle in an
+isolated `HERMES_HOME`, and rejection of non-GLB data.
 
 Useful direct checks:
 

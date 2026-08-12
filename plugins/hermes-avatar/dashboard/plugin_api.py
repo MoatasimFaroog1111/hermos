@@ -10,21 +10,28 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import tempfile
 import threading
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Deque
+from pathlib import Path
+from typing import AsyncIterable, Deque
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+
+from hermes_constants import get_process_hermes_home
 
 router = APIRouter()
 
 _MAX_MESSAGE_CHARS = 8_000
 _MAX_TURNS = 10
+_MAX_AVATAR_BYTES = 25 * 1024 * 1024
+_GLB_MAGIC = b"glTF"
 _DIRECT_AGENT_LOCK = threading.Lock()
 
 
@@ -48,9 +55,7 @@ class ConversationMemory:
     def build_prompt(self, message: str) -> str:
         if not self.turns:
             return message
-        transcript = "\n".join(
-            f"{role}: {text}" for role, text in self.turns
-        )
+        transcript = "\n".join(f"{role}: {text}" for role, text in self.turns)
         return (
             "Continue this conversational exchange naturally. "
             "Do not mention that a transcript was supplied.\n\n"
@@ -62,7 +67,99 @@ class ConversationMemory:
         self.turns.append(("Assistant", assistant_reply))
 
 
+class AvatarModelStorage:
+    """Persist one operator-selected GLB with bounded, atomic writes."""
+
+    def __init__(self, max_bytes: int = _MAX_AVATAR_BYTES) -> None:
+        self.max_bytes = max_bytes
+
+    def path(self) -> Path:
+        return (
+            get_process_hermes_home()
+            / "dashboard-assets"
+            / "hermes-avatar"
+            / "avatar.glb"
+        )
+
+    def exists(self) -> bool:
+        return self.path().is_file()
+
+    @staticmethod
+    def _validate_glb(path: Path, total_bytes: int) -> None:
+        with path.open("rb") as handle:
+            header = handle.read(12)
+        if len(header) != 12 or header[:4] != _GLB_MAGIC:
+            raise ValueError("Avatar file is not a GLB binary")
+        version = int.from_bytes(header[4:8], "little")
+        declared_length = int.from_bytes(header[8:12], "little")
+        if version != 2:
+            raise ValueError("Only GLB version 2 is supported")
+        if declared_length != total_bytes:
+            raise ValueError("GLB header length does not match the uploaded file")
+
+    async def save(
+        self,
+        chunks: AsyncIterable[bytes],
+        content_length: int | None,
+    ) -> int:
+        if content_length is not None and content_length > self.max_bytes:
+            raise OverflowError("Avatar exceeds the upload size limit")
+        if content_length is not None and content_length <= 0:
+            raise ValueError("Avatar upload is empty")
+
+        target = self.path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=".avatar-",
+            suffix=".tmp",
+            dir=target.parent,
+        )
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+        total = 0
+
+        try:
+            with tmp_path.open("wb") as handle:
+                async for chunk in chunks:
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > self.max_bytes:
+                        raise OverflowError("Avatar exceeds the upload size limit")
+                    handle.write(chunk)
+
+            if total == 0:
+                raise ValueError("Avatar upload is empty")
+            self._validate_glb(tmp_path, total)
+            os.replace(tmp_path, target)
+            try:
+                os.chmod(target, 0o600)
+            except OSError:
+                pass
+            return total
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def delete(self) -> bool:
+        path = self.path()
+        if not path.is_file():
+            return False
+        path.unlink()
+        return True
+
+    def response(self) -> FileResponse:
+        return FileResponse(
+            self.path(),
+            media_type="model/gltf-binary",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+
 _CONVERSATIONS: dict[str, ConversationMemory] = {}
+_AVATAR_STORAGE = AvatarModelStorage()
 
 
 def _api_server_url() -> str:
@@ -72,7 +169,7 @@ def _api_server_url() -> str:
 
 
 def _avatar_model_url() -> str:
-    """Return a browser-safe GLB URL without turning the backend into a proxy."""
+    """Return a browser-safe configured GLB URL without proxying arbitrary URLs."""
     value = (os.getenv("HERMES_AVATAR_GLB_URL") or "").strip()
     if not value:
         return ""
@@ -89,6 +186,63 @@ def _avatar_model_url() -> str:
     if parsed.scheme == "https" and parsed.netloc:
         return value
     return ""
+
+
+def _avatar_descriptor() -> dict:
+    if _AVATAR_STORAGE.exists():
+        return {
+            "avatar_model_configured": True,
+            "avatar_model_url": "/api/plugins/hermes-avatar/avatar-model",
+            "avatar_model_requires_auth": True,
+            "avatar_provider": "uploaded-glb",
+            "avatar_uploaded": True,
+        }
+
+    configured_url = _avatar_model_url()
+    return {
+        "avatar_model_configured": bool(configured_url),
+        "avatar_model_url": configured_url,
+        "avatar_model_requires_auth": False,
+        "avatar_provider": "configured-glb" if configured_url else "procedural",
+        "avatar_uploaded": False,
+    }
+
+
+def _health_payload() -> dict:
+    return {
+        "plugin": "hermes-avatar",
+        "version": "0.3.0",
+        "api_server_configured": bool((os.getenv("API_SERVER_KEY") or "").strip()),
+        "speech": "browser",
+        "renderer": "three-glb-with-procedural-fallback",
+        "visual_modes": ["human", "hologram"],
+        **_avatar_descriptor(),
+        "avatar_upload_max_bytes": _MAX_AVATAR_BYTES,
+        "facial_channels": [
+            "blink",
+            "jaw",
+            "mouth_open",
+            "mouth_round",
+            "mouth_wide",
+            "smile",
+            "brow",
+            "gaze",
+        ],
+        "morph_targets": True,
+    }
+
+
+def _request_content_length(request: Request) -> int | None:
+    raw = request.headers.get("content-length")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid Content-Length") from exc
+    if value < 0:
+        raise HTTPException(status_code=400, detail="Invalid Content-Length")
+    return value
 
 
 def _extract_responses_text(payload: dict) -> str:
@@ -158,29 +312,35 @@ def _direct_hermes_turn(message: str, conversation_id: str) -> str:
 
 @router.get("/health")
 async def health():
-    avatar_model_url = _avatar_model_url()
-    return {
-        "plugin": "hermes-avatar",
-        "version": "0.3.0",
-        "api_server_configured": bool((os.getenv("API_SERVER_KEY") or "").strip()),
-        "speech": "browser",
-        "renderer": "three-glb-with-procedural-fallback",
-        "visual_modes": ["human", "hologram"],
-        "avatar_model_configured": bool(avatar_model_url),
-        "avatar_model_url": avatar_model_url,
-        "avatar_provider": "glb" if avatar_model_url else "procedural",
-        "facial_channels": [
-            "blink",
-            "jaw",
-            "mouth_open",
-            "mouth_round",
-            "mouth_wide",
-            "smile",
-            "brow",
-            "gaze",
-        ],
-        "morph_targets": True,
-    }
+    return _health_payload()
+
+
+@router.put("/avatar-model")
+async def upload_avatar_model(request: Request):
+    try:
+        uploaded_bytes = await _AVATAR_STORAGE.save(
+            request.stream(),
+            _request_content_length(request),
+        )
+    except OverflowError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {**_health_payload(), "uploaded_bytes": uploaded_bytes}
+
+
+@router.get("/avatar-model")
+async def get_avatar_model():
+    if not _AVATAR_STORAGE.exists():
+        raise HTTPException(status_code=404, detail="No uploaded avatar model")
+    return _AVATAR_STORAGE.response()
+
+
+@router.delete("/avatar-model")
+async def delete_avatar_model():
+    removed = _AVATAR_STORAGE.delete()
+    return {**_health_payload(), "removed": removed}
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -191,9 +351,7 @@ async def chat(body: ChatRequest):
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
     try:
-        reply = await asyncio.to_thread(
-            _call_api_server, message, conversation_id
-        )
+        reply = await asyncio.to_thread(_call_api_server, message, conversation_id)
         return ChatResponse(
             reply=reply,
             conversation_id=conversation_id,
@@ -206,9 +364,7 @@ async def chat(body: ChatRequest):
         pass
 
     try:
-        reply = await asyncio.to_thread(
-            _direct_hermes_turn, message, conversation_id
-        )
+        reply = await asyncio.to_thread(_direct_hermes_turn, message, conversation_id)
         return ChatResponse(
             reply=reply,
             conversation_id=conversation_id,

@@ -1,26 +1,29 @@
 # Hermes Digital Human
 
 A bundled Hermes Dashboard plugin that adds a responsive, voice-enabled 3D
-digital-human interface while keeping chat, speech, facial state, and rendering
-as separate responsibilities.
+Digital Human while keeping AI transport, speech, facial state, model storage,
+and rendering as separate responsibilities.
 
-## Version 0.3.0
+## Version 0.4.0
 
-Digital Human v0.3 adds a real GLB/GLTF renderer path on top of the v0.2 voice
-and facial-state work:
+Digital Human v0.4 makes real GLB characters usable directly from the dashboard:
 
-- Three.js is loaded lazily through the Hermes Dashboard Plugin SDK.
-- `GLTFLoader` loads a configured GLB character without a CDN dependency.
-- Ready Player Me/custom GLB morph targets are discovered at runtime.
-- Common ARKit/Ready Player Me targets are mapped for blink, jaw, mouth round,
-  mouth wide, smile, brow movement, and viseme-style articulation.
-- Embedded idle/breathing animation clips are used when a GLB provides them.
-- Head pose follows pointer movement when a head object is discoverable.
-- Human and Hologram modes work through the same renderer adapter.
-- If the GLB is absent or fails to load, a local Three.js procedural human is
-  built automatically so chat and voice remain usable.
-- Browser speech recognition, Arabic/English TTS, text input, Hermes sessions,
-  and the server-side AI bridge remain independent of the 3D provider.
+- **LOAD GLB** uploads a character from the Digital Human page.
+- Uploaded avatars persist under the process-level `HERMES_HOME`.
+- Uploads are streamed with a 25 MB hard limit; no multipart dependency is
+  required.
+- The backend validates GLB magic, GLB version 2, and the declared binary
+  length before atomically replacing the active avatar.
+- Stored models are served from the authenticated plugin API with `no-store`
+  and `nosniff` response headers.
+- The browser retrieves protected models with the Dashboard SDK's
+  `authedFetch`, converts them to a Blob URL, then hands that URL to Three.js.
+  This works with both gated-cookie and loopback session-token authentication.
+- **REMOVE GLB** deletes the uploaded avatar and immediately falls back to a
+  configured model URL or the built-in procedural human.
+- `HERMES_AVATAR_GLB_URL` remains available for operator-managed deployments.
+- Three.js and `GLTFLoader` are still lazy-loaded through Plugin SDK 1.2; no CDN
+  or new npm dependency is introduced.
 
 ## Architecture
 
@@ -28,6 +31,12 @@ and facial-state work:
 DigitalHumanPage (React composition root)
         |
         +-- HermesAvatarClient ---------> /api/plugins/hermes-avatar/chat
+        |
+        +-- AvatarModelStore
+        |       +-- PUT    /api/plugins/hermes-avatar/avatar-model
+        |       +-- GET    /api/plugins/hermes-avatar/avatar-model
+        |       +-- DELETE /api/plugins/hermes-avatar/avatar-model
+        |       +-- SDK.authedFetch -> Blob URL
         |
         +-- BrowserSpeechInput ---------> Web Speech Recognition
         |
@@ -39,7 +48,7 @@ DigitalHumanPage (React composition root)
                     |
                     +-- ThreeAvatarRenderer
                              |
-                             +-- GLTFLoader -> configured GLB + Morph Targets
+                             +-- GLTFLoader -> GLB + Morph Targets
                              |
                              +-- procedural Three.js fallback
 
@@ -52,43 +61,57 @@ Hermes Plugin SDK 1.2
 
 ### SOLID mapping
 
-- **Single Responsibility**: AI transport, speech input, speech output, viseme
-  mapping, facial state, React composition, and Three.js rendering are separate
-  classes/modules.
-- **Open/Closed**: GLB models and future TTS providers can be swapped without
-  modifying the Hermes chat client.
-- **Liskov Substitution**: the renderer keeps a small lifecycle surface
-  (`init`, `setMode`, `destroy`) and receives renderer-independent signals.
-- **Interface Segregation**: 3D plugins request only the optional graphics
-  runtime; ordinary dashboard plugins do not import or initialize Three.js.
-- **Dependency Inversion**: the avatar consumes the host Plugin SDK and Hermes
-  plugin API rather than provider globals or browser-exposed AI credentials.
+- **Single Responsibility**: Hermes transport, avatar storage, speech input,
+  speech output, viseme mapping, facial state, UI composition, and Three.js
+  rendering have separate classes/ports.
+- **Open/Closed**: a Ready Player Me/custom GLB or a future TTS provider can be
+  swapped without changing the Hermes chat transport.
+- **Liskov Substitution**: the renderer receives renderer-independent facial
+  signals and keeps the small lifecycle surface `init`, `setMode`, `destroy`.
+- **Interface Segregation**: ordinary dashboard plugins never initialize
+  Three.js; 3D code asks only for the optional graphics runtime.
+- **Dependency Inversion**: browser code depends on the Dashboard SDK and the
+  plugin API rather than provider globals, filesystem paths, or exposed AI
+  credentials.
 
-## Configure a GLB avatar
+## Load a GLB avatar from the UI
 
-Set this environment variable on the Hermes deployment:
+1. Open **Digital Human**.
+2. Press **LOAD GLB**.
+3. Select a `.glb` file up to 25 MB.
+4. After validation, Hermes stores it and reloads the renderer automatically.
+5. Press **REMOVE GLB** to return to the configured/procedural avatar.
+
+The storage location is resolved with `get_process_hermes_home()` so it follows
+Hermes' real process profile on Railway, Linux, macOS, and Windows rather than
+assuming a hard-coded `~/.hermes` path.
+
+## Configure a deployment-managed GLB
+
+The UI upload is optional. Operators can still configure a model URL:
 
 ```bash
 HERMES_AVATAR_GLB_URL=https://assets.example.com/hermes-avatar.glb
 ```
 
-A same-origin path is also supported, for example:
+A true same-origin path is also accepted:
 
 ```bash
 HERMES_AVATAR_GLB_URL=/dashboard-plugins/hermes-avatar/assets/avatar.glb
 ```
 
-Only root-relative URLs and `https://` URLs are exposed by the backend. The
-browser loads the asset directly; Hermes does not proxy arbitrary remote URLs.
-For a remote model, its origin must permit browser CORS access.
+The backend accepts explicit `https://` URLs or a single-leading-slash
+same-origin path. Protocol-relative values such as `//host/avatar.glb`,
+backslash-normalized variants, plain HTTP, and malformed HTTPS URLs are
+rejected. Remote models must permit browser CORS access.
 
-When the variable is empty, invalid, or the model cannot be loaded, v0.3
-automatically renders the local procedural human instead.
+An uploaded model takes precedence. Removing it reveals the configured model
+again; if neither exists, the local procedural human is used.
 
 ## Morph target compatibility
 
 The renderer discovers morph dictionaries on every mesh and recognizes common
-names including:
+ARKit / Ready Player Me names including:
 
 - `eyeBlinkLeft`, `eyeBlinkRight`
 - `jawOpen`, `mouthOpen`, `viseme_aa`
@@ -97,9 +120,16 @@ names including:
 - `mouthSmileLeft`, `mouthSmileRight`, `mouthSmile`
 - `browInnerUp`, `browOuterUpLeft`, `browOuterUpRight`
 
-Name matching is normalized for case and punctuation. A GLB can therefore come
-from Ready Player Me or another character pipeline without coupling the chat
-layer to a particular vendor.
+Names are normalized for case and punctuation. If a GLB includes animation
+clips, an idle/breathing-looking clip is preferred and otherwise the first clip
+is played.
+
+## Human and Hologram modes
+
+Both modes use the same scene and facial rig. Human mode restores the model's
+materials. Hologram mode applies cyan emissive/transparency treatment without
+changing conversation, speech, or morph logic. Pointer movement drives subtle
+head pose; the procedural fallback also moves the eyes.
 
 ## Hermes connection
 
@@ -110,19 +140,18 @@ POST http://127.0.0.1:8642/v1/responses
 ```
 
 With `API_SERVER_KEY` configured, Digital Human uses a named server-side
-conversation. If the API server is unavailable, the existing in-process direct
+conversation. If that API server is unavailable, the existing in-process
 fallback remains available. Provider credentials never enter browser JavaScript.
 
 ## Voice and lip sync
 
-`VisemeMapper` turns speech-boundary characters into independent `open`,
+`VisemeMapper` translates speech-boundary characters into independent `open`,
 `round`, `wide`, and `jaw` channels for Arabic and English. Browsers without
-useful boundary timing use a natural cadence while speech is playing.
+useful boundary events use a natural cadence while speech is active.
 
-For a GLB, those same channels are translated into available morph targets.
-This keeps the speech adapter replaceable: a future ElevenLabs/Google/alignment
-provider can emit precise phoneme timing without changing Hermes transport or
-3D model loading.
+Those channels are translated into whatever compatible morph targets the GLB
+contains. A future ElevenLabs/Google/alignment adapter can therefore provide
+precise phoneme timing without rewriting Hermes transport or the 3D renderer.
 
 ## Runtime files
 
@@ -131,23 +160,32 @@ dashboard/
 ├── manifest.json
 ├── plugin_api.py
 └── dist/
-    ├── avatar-v3.js
+    ├── avatar-v4.js
     ├── three-avatar-renderer.js
     └── realistic.css
 ```
 
-The v0.2 JavaScript renderer was removed after v0.3 became active. The v0.2
-stylesheet remains because the v0.3 composition intentionally preserves the
-same responsive UI contract.
+Superseded v0.2/v0.3 JavaScript entries are removed. The existing responsive
+stylesheet is intentionally reused by v0.4.
 
 ## Validation
 
-From the repository root:
+The feature has a dedicated smoke-test module:
+
+```text
+tests/hermes_cli/test_digital_human_plugin.py
+```
+
+It checks the manifest/runtime contract, lazy Three.js SDK boundary, morph
+mapping markers, safe configured-URL validation, a real minimal GLB upload/get/
+delete lifecycle in an isolated `HERMES_HOME`, and rejection of non-GLB data.
+
+Useful direct checks:
 
 ```bash
-node --check plugins/hermes-avatar/dashboard/dist/avatar-v3.js
+node --check plugins/hermes-avatar/dashboard/dist/avatar-v4.js
 node --check plugins/hermes-avatar/dashboard/dist/three-avatar-renderer.js
 python -m py_compile plugins/hermes-avatar/dashboard/plugin_api.py
 python -m json.tool plugins/hermes-avatar/dashboard/manifest.json >/dev/null
-npm run --prefix web typecheck
+pytest -q tests/hermes_cli/test_digital_human_plugin.py
 ```

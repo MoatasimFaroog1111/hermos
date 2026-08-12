@@ -6,6 +6,6 @@
   "version": "0.4.0",
   "tab": { "path": "/digital-human", "position": "after:chat" },
   "entry": "dist/avatar-v4.js",
-  "css": "dist/realistic.css",
+  "css": "dist/avatar-v4.css",
   "api": "plugin_api.py"
 }

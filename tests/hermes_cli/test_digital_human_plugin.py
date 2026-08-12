@@ -87,8 +87,12 @@ def test_avatar_model_url_allows_only_same_origin_or_https(monkeypatch):
     )
     assert plugin_api._avatar_model_url() == "https://assets.example.com/hermes.glb"
 
-    monkeypatch.setenv(
-        "HERMES_AVATAR_GLB_URL",
+    rejected_urls = (
         "http://assets.example.com/hermes.glb",
+        "//assets.example.com/hermes.glb",
+        "/\\assets.example.com/hermes.glb",
+        "https:///missing-host.glb",
     )
-    assert plugin_api._avatar_model_url() == ""
+    for rejected_url in rejected_urls:
+        monkeypatch.setenv("HERMES_AVATAR_GLB_URL", rejected_url)
+        assert plugin_api._avatar_model_url() == ""

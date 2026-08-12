@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import urllib.error
 import urllib.request
 from collections import deque
@@ -23,7 +24,7 @@ router = APIRouter()
 
 _MAX_MESSAGE_CHARS = 8_000
 _MAX_TURNS = 10
-_DIRECT_AGENT_LOCK = asyncio.Lock()
+_DIRECT_AGENT_LOCK = threading.Lock()
 
 
 class ChatRequest(BaseModel):
@@ -119,18 +120,19 @@ def _direct_hermes_turn(message: str, conversation_id: str) -> str:
     """Safe fallback: run Hermes without toolsets and preserve short UI context."""
     from hermes_cli.oneshot import _run_agent
 
-    memory = _CONVERSATIONS.setdefault(conversation_id, ConversationMemory())
-    prompt = memory.build_prompt(message)
-    reply, _result = _run_agent(
-        prompt,
-        toolsets=["__digital_human_no_tools__"],
-        use_config_toolsets=False,
-    )
-    reply = (reply or "").strip()
-    if not reply:
-        raise RuntimeError("Hermes produced no final response")
-    memory.append(message, reply)
-    return reply
+    with _DIRECT_AGENT_LOCK:
+        memory = _CONVERSATIONS.setdefault(conversation_id, ConversationMemory())
+        prompt = memory.build_prompt(message)
+        reply, _result = _run_agent(
+            prompt,
+            toolsets=["__digital_human_no_tools__"],
+            use_config_toolsets=False,
+        )
+        reply = (reply or "").strip()
+        if not reply:
+            raise RuntimeError("Hermes produced no final response")
+        memory.append(message, reply)
+        return reply
 
 
 @router.get("/health")
@@ -167,10 +169,9 @@ async def chat(body: ChatRequest):
         pass
 
     try:
-        async with _DIRECT_AGENT_LOCK:
-            reply = await asyncio.to_thread(
-                _direct_hermes_turn, message, conversation_id
-            )
+        reply = await asyncio.to_thread(
+            _direct_hermes_turn, message, conversation_id
+        )
         return ChatResponse(
             reply=reply,
             conversation_id=conversation_id,

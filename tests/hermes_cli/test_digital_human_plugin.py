@@ -6,7 +6,6 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 from fastapi import FastAPI
@@ -18,7 +17,7 @@ _PLUGIN_DIR = _REPO_ROOT / "plugins" / "hermes-avatar" / "dashboard"
 _MANIFEST_PATH = _PLUGIN_DIR / "manifest.json"
 
 
-def _load_plugin_api() -> ModuleType:
+def _load_plugin_api():
     module_name = "hermes_avatar_dashboard_plugin_api_test"
     spec = importlib.util.spec_from_file_location(
         module_name,
@@ -33,7 +32,8 @@ def _load_plugin_api() -> ModuleType:
 
 
 def _minimal_glb() -> bytes:
-    json_chunk = b"{}  "
+    json_chunk = b'{"asset":{"version":"2.0"}}'
+    json_chunk += b" " * (-len(json_chunk) % 4)
     total_length = 12 + 8 + len(json_chunk)
     return (
         b"glTF"

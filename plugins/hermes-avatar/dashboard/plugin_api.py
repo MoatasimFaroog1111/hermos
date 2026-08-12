@@ -211,12 +211,13 @@ def _avatar_descriptor() -> dict:
 def _health_payload() -> dict:
     return {
         "plugin": "hermes-avatar",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "api_server_configured": bool((os.getenv("API_SERVER_KEY") or "").strip()),
         "speech": "browser",
         "renderer": "three-glb-with-procedural-fallback",
         "visual_modes": ["human", "hologram"],
         **_avatar_descriptor(),
+        "avatar_upload_supported": True,
         "avatar_upload_max_bytes": _MAX_AVATAR_BYTES,
         "facial_channels": [
             "blink",

@@ -1,0 +1,722 @@
+(function () {
+  "use strict";
+
+  const SDK = window.__HERMES_PLUGIN_SDK__;
+  const REGISTRY = window.__HERMES_PLUGINS__;
+  if (!SDK || !REGISTRY) return;
+
+  const React = SDK.React;
+  const h = React.createElement;
+  const { useState, useEffect, useCallback, useMemo, useRef } = SDK.hooks;
+
+  const STATES = Object.freeze({
+    IDLE: "idle",
+    LISTENING: "listening",
+    THINKING: "thinking",
+    SPEAKING: "speaking",
+    ERROR: "error",
+  });
+  const LABELS = Object.freeze({
+    idle: "Ready",
+    listening: "Listening",
+    thinking: "Thinking",
+    speaking: "Speaking",
+    error: "Needs attention",
+  });
+  const MODES = Object.freeze({ HUMAN: "human", HOLOGRAM: "hologram" });
+  const RENDERER_SCRIPT = "/dashboard-plugins/hermes-avatar/dist/three-avatar-renderer.js";
+  let rendererModulePromise = null;
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function createConversationId() {
+    const key = "hermes.digitalHuman.conversation.v3";
+    try {
+      let id = sessionStorage.getItem(key);
+      if (!id) {
+        id = window.crypto?.randomUUID?.()
+          || `human-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        sessionStorage.setItem(key, id);
+      }
+      return id;
+    } catch {
+      return `human-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+  }
+
+  function loadRendererModule() {
+    if (window.__HERMES_AVATAR_RENDERER__?.ThreeAvatarRenderer) {
+      return Promise.resolve(window.__HERMES_AVATAR_RENDERER__);
+    }
+    if (rendererModulePromise) return rendererModulePromise;
+    rendererModulePromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = RENDERER_SCRIPT;
+      script.async = true;
+      script.onload = () => {
+        if (window.__HERMES_AVATAR_RENDERER__?.ThreeAvatarRenderer) {
+          resolve(window.__HERMES_AVATAR_RENDERER__);
+        } else {
+          reject(new Error("Avatar renderer module did not register."));
+        }
+      };
+      script.onerror = () => reject(new Error("Unable to load avatar renderer module."));
+      document.head.appendChild(script);
+    });
+    return rendererModulePromise;
+  }
+
+  class HermesAvatarClient {
+    constructor(fetchJSON) {
+      this.fetchJSON = fetchJSON;
+    }
+    send(message, conversationId) {
+      return this.fetchJSON("/api/plugins/hermes-avatar/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, conversation_id: conversationId }),
+      });
+    }
+    health() {
+      return this.fetchJSON("/api/plugins/hermes-avatar/health");
+    }
+  }
+
+  class VisemeMapper {
+    map(character) {
+      const c = String(character || "").toLowerCase();
+      if (/[mbp\u0645\u0628]/.test(c)) return { open: 0.03, round: 0.02, wide: 0.12, jaw: 0.01 };
+      if (/[oquw\u0648]/.test(c)) return { open: 0.40, round: 0.88, wide: 0.05, jaw: 0.28 };
+      if (/[eiy\u064a\u0649]/.test(c)) return { open: 0.38, round: 0.04, wide: 0.88, jaw: 0.20 };
+      if (/[a\u0627\u0623\u0625]/.test(c)) return { open: 0.78, round: 0.12, wide: 0.42, jaw: 0.54 };
+      if (/[fv\u0641]/.test(c)) return { open: 0.16, round: 0.08, wide: 0.48, jaw: 0.08 };
+      if (/[sztdlnr\u0633\u0634\u062a\u062f\u0644\u0631]/.test(c)) {
+        return { open: 0.28, round: 0.05, wide: 0.58, jaw: 0.14 };
+      }
+      return { open: 0.22, round: 0.08, wide: 0.34, jaw: 0.10 };
+    }
+    cadence(phase) {
+      return {
+        open: 0.24 + Math.abs(Math.sin(phase)) * 0.42,
+        round: 0.10 + Math.abs(Math.sin(phase * 0.63)) * 0.24,
+        wide: 0.28 + Math.abs(Math.cos(phase * 0.81)) * 0.28,
+        jaw: 0.10 + Math.abs(Math.sin(phase)) * 0.27,
+      };
+    }
+  }
+
+  class BrowserSpeechOutput {
+    constructor(visemes) {
+      this.visemes = visemes;
+      this.timer = null;
+      this.utterance = null;
+    }
+    get supported() {
+      return "speechSynthesis" in window;
+    }
+    stop() {
+      if (this.timer) clearInterval(this.timer);
+      this.timer = null;
+      if (this.supported) window.speechSynthesis.cancel();
+      this.utterance = null;
+    }
+    chooseVoice(text) {
+      if (!this.supported) return null;
+      const arabic = /[\u0600-\u06ff]/.test(text);
+      const prefix = arabic ? "ar" : "en";
+      const voices = window.speechSynthesis.getVoices();
+      return voices.find(voice =>
+        voice.lang.toLowerCase().startsWith(prefix)
+        && /google|microsoft|majed|hamed|samantha/i.test(voice.name)
+      ) || voices.find(voice => voice.lang.toLowerCase().startsWith(prefix)) || voices[0] || null;
+    }
+    speak(text, events) {
+      this.stop();
+      if (!this.supported || !text.trim()) {
+        events.onEnd();
+        return;
+      }
+      const utterance = new SpeechSynthesisUtterance(text);
+      const voice = this.chooseVoice(text);
+      const arabic = /[\u0600-\u06ff]/.test(text);
+      if (voice) utterance.voice = voice;
+      utterance.lang = voice?.lang || (arabic ? "ar-SA" : "en-US");
+      utterance.rate = arabic ? 0.98 : 1.02;
+      utterance.pitch = 0.94;
+
+      utterance.onstart = () => {
+        events.onStart();
+        let phase = 0;
+        this.timer = setInterval(() => {
+          phase += 0.72;
+          events.onViseme(this.visemes.cadence(phase));
+        }, 92);
+      };
+      utterance.onboundary = event => {
+        const index = typeof event.charIndex === "number" ? event.charIndex : 0;
+        events.onViseme(this.visemes.map(text[index] || text[index - 1] || ""));
+      };
+      utterance.onerror = event => {
+        this.stop();
+        if (event.error !== "canceled") events.onError(event.error || "speech_error");
+      };
+      utterance.onend = () => {
+        if (this.timer) clearInterval(this.timer);
+        this.timer = null;
+        this.utterance = null;
+        events.onViseme({ open: 0.03, round: 0, wide: 0.18, jaw: 0 });
+        events.onEnd();
+      };
+
+      this.utterance = utterance;
+      window.speechSynthesis.speak(utterance);
+    }
+  }
+
+  class BrowserSpeechInput {
+    constructor() {
+      this.Ctor = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+      this.instance = null;
+    }
+    get supported() {
+      return Boolean(this.Ctor);
+    }
+    stop() {
+      if (this.instance) {
+        try { this.instance.stop(); } catch { /* no-op */ }
+      }
+      this.instance = null;
+    }
+    listen({ onInterim }) {
+      if (!this.Ctor) {
+        return Promise.reject(new Error("Speech recognition is not supported in this browser."));
+      }
+      this.stop();
+      return new Promise((resolve, reject) => {
+        const recognition = new this.Ctor();
+        this.instance = recognition;
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+        recognition.lang = navigator.language || "en-US";
+        let finalText = "";
+
+        recognition.onresult = event => {
+          let interim = "";
+          for (let i = event.resultIndex; i < event.results.length; i += 1) {
+            const text = event.results[i][0]?.transcript || "";
+            if (event.results[i].isFinal) finalText += text;
+            else interim += text;
+          }
+          onInterim((finalText || interim).trim());
+        };
+        recognition.onerror = event => {
+          this.instance = null;
+          reject(new Error(event.error || "Microphone recognition failed."));
+        };
+        recognition.onend = () => {
+          this.instance = null;
+          if (finalText.trim()) resolve(finalText.trim());
+          else reject(new Error("I did not catch any speech."));
+        };
+        recognition.start();
+      });
+    }
+  }
+
+  class AvatarController {
+    constructor() {
+      this.signals = {
+        state: STATES.IDLE,
+        blink: 0,
+        mouthOpen: 0.03,
+        mouthRound: 0,
+        mouthWide: 0.18,
+        jaw: 0,
+        smile: 0.12,
+        browLift: 0.05,
+      };
+      this.listeners = new Set();
+      this.scheduleBlink();
+    }
+    subscribe(listener) {
+      this.listeners.add(listener);
+      listener(this.signals);
+      return () => this.listeners.delete(listener);
+    }
+    emit() {
+      for (const listener of this.listeners) listener(this.signals);
+    }
+    patch(patch) {
+      this.signals = { ...this.signals, ...patch };
+      this.emit();
+    }
+    setState(state) {
+      this.patch({
+        state,
+        smile: state === STATES.SPEAKING ? 0.25 : state === STATES.IDLE ? 0.12 : 0.06,
+        browLift: state === STATES.LISTENING ? 0.20 : state === STATES.THINKING ? 0.10 : 0.05,
+      });
+    }
+    setViseme(value) {
+      this.patch({
+        mouthOpen: clamp(value.open ?? 0.03, 0.02, 0.95),
+        mouthRound: clamp(value.round ?? 0, 0, 1),
+        mouthWide: clamp(value.wide ?? 0.18, 0, 1),
+        jaw: clamp(value.jaw ?? 0, 0, 0.72),
+      });
+    }
+    scheduleBlink() {
+      this.blinkTimer = setTimeout(() => {
+        this.patch({ blink: 1 });
+        setTimeout(() => this.patch({ blink: 0 }), 115);
+        this.scheduleBlink();
+      }, 2200 + Math.random() * 4200);
+    }
+    destroy() {
+      if (this.blinkTimer) clearTimeout(this.blinkTimer);
+      this.listeners.clear();
+    }
+  }
+
+  function StatusPill({ state }) {
+    return h(
+      "div",
+      { className: `dh2-status dh2-status--${state}`, "aria-live": "polite" },
+      h("span", { className: "dh2-status__dot" }),
+      h("span", null, LABELS[state] || state),
+    );
+  }
+
+  function ModeSwitch({ mode, onChange }) {
+    return h(
+      "div",
+      { className: "dh2-mode", role: "group", "aria-label": "Avatar visual mode" },
+      h("button", {
+        type: "button",
+        className: mode === MODES.HUMAN ? "is-active" : "",
+        onClick: () => onChange(MODES.HUMAN),
+      }, "HUMAN"),
+      h("button", {
+        type: "button",
+        className: mode === MODES.HOLOGRAM ? "is-active" : "",
+        onClick: () => onChange(MODES.HOLOGRAM),
+      }, "HOLOGRAM"),
+    );
+  }
+
+  function AvatarStage({ controller, state, mode, onModeChange, modelUrl }) {
+    const canvasRef = useRef(null);
+    const rendererRef = useRef(null);
+    const [rendererStatus, setRendererStatus] = useState("loading");
+    const [ready, setReady] = useState(true);
+
+    useEffect(() => {
+      if (!canvasRef.current) return undefined;
+      let active = true;
+      let renderer = null;
+
+      loadRendererModule()
+        .then(module => {
+          if (!active || !canvasRef.current) return;
+          renderer = new module.ThreeAvatarRenderer(canvasRef.current, controller, {
+            mode,
+            modelUrl,
+            onStatus: status => {
+              if (active) {
+                setRendererStatus(status);
+                setReady(true);
+              }
+            },
+          });
+          rendererRef.current = renderer;
+          return renderer.init();
+        })
+        .catch(error => {
+          console.warn("[hermes-avatar] renderer failed", error);
+          if (active) {
+            setReady(false);
+            setRendererStatus("unavailable");
+          }
+        });
+
+      return () => {
+        active = false;
+        renderer?.destroy();
+        if (rendererRef.current === renderer) rendererRef.current = null;
+      };
+    }, [controller, modelUrl]);
+
+    useEffect(() => {
+      rendererRef.current?.setMode(mode);
+    }, [mode]);
+
+    const labels = {
+      glb: "GLB / MORPH TARGETS",
+      "procedural-fallback": "GLB FALLBACK",
+      procedural: "THREE PROCEDURAL",
+      loading: "LOADING 3D",
+      unavailable: "3D UNAVAILABLE",
+    };
+    const rendererLabel = labels[rendererStatus] || rendererStatus.toUpperCase();
+
+    return h(
+      "section",
+      { className: `dh2-stage dh2-stage--${mode}`, "aria-label": "Interactive Hermes digital human" },
+      h("div", { className: "dh2-stage__aurora" }),
+      h("div", { className: "dh2-stage__grid" }),
+      h("div", { className: "dh2-stage__ring dh2-stage__ring--a" }),
+      h("div", { className: "dh2-stage__ring dh2-stage__ring--b" }),
+      h("canvas", { ref: canvasRef, className: "dh2-stage__canvas", "aria-hidden": "true" }),
+      !ready && h(
+        "div",
+        { className: "dh2-fallback" },
+        h("strong", null, "3D unavailable"),
+        h("span", null, "Chat and voice remain available."),
+      ),
+      h("div", { className: "dh2-stage__scan" }),
+      h(
+        "div",
+        { className: "dh2-stage__top" },
+        h(StatusPill, { state }),
+        h(ModeSwitch, { mode, onChange: onModeChange }),
+      ),
+      h(
+        "div",
+        { className: "dh2-stage__caption" },
+        h("span", { className: "dh2-kicker" }, `HERMES // DIGITAL HUMAN 03 // ${rendererLabel}`),
+        h("strong", null, mode === MODES.HUMAN ? "Human Presence" : "Holographic Presence"),
+        h("small", null, modelUrl
+          ? "GLB renderer with morph-target mapping and automatic local fallback."
+          : "Configure HERMES_AVATAR_GLB_URL for a GLB/Ready Player Me character."),
+      ),
+    );
+  }
+
+  function MessageBubble({ item }) {
+    return h(
+      "article",
+      { className: `dh2-message dh2-message--${item.role}` },
+      h(
+        "div",
+        { className: "dh2-message__meta" },
+        h("span", null, item.role === "user" ? "YOU" : "HERMES"),
+        item.transport && h("span", null, item.transport),
+      ),
+      h("div", { className: "dh2-message__text", dir: "auto" }, item.text),
+    );
+  }
+
+  function Transcript({ messages, thinking, endRef }) {
+    return h(
+      "div",
+      { className: "dh2-transcript", role: "log", "aria-live": "polite" },
+      messages.length === 0 && h(
+        "div",
+        { className: "dh2-empty" },
+        h("div", { className: "dh2-empty__orb" }, "H"),
+        h("strong", null, "Speak naturally with Hermes"),
+        h("span", null, "Use text or microphone. Replies animate the face and play through your browser voice."),
+      ),
+      ...messages.map(item => h(MessageBubble, { item, key: item.id })),
+      thinking && h(
+        "div",
+        { className: "dh2-thinking" },
+        h("span"), h("span"), h("span"), h("em", null, "Hermes is thinking"),
+      ),
+      h("div", { ref: endRef }),
+    );
+  }
+
+  function Composer(props) {
+    const {
+      value, onChange, onSubmit, onMic, micSupported, listening,
+      busy, voiceEnabled, onToggleVoice, onStopVoice,
+    } = props;
+    const onKeyDown = event => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        onSubmit();
+      }
+    };
+    return h(
+      "div",
+      { className: "dh2-composer" },
+      h("textarea", {
+        value,
+        rows: 2,
+        dir: "auto",
+        placeholder: listening ? "Listening…" : "Talk to Hermes…",
+        onChange: event => onChange(event.target.value),
+        onKeyDown,
+        disabled: busy || listening,
+        "aria-label": "Message Hermes",
+      }),
+      h(
+        "div",
+        { className: "dh2-composer__actions" },
+        h("button", {
+          type: "button",
+          className: `dh2-icon ${listening ? "is-live" : ""}`,
+          onClick: onMic,
+          disabled: !micSupported || busy,
+          title: micSupported ? (listening ? "Stop listening" : "Use microphone") : "Speech recognition unavailable",
+        }, listening ? "■" : "●"),
+        h("button", {
+          type: "button",
+          className: `dh2-icon ${voiceEnabled ? "is-on" : ""}`,
+          onClick: onToggleVoice,
+        }, voiceEnabled ? "VOICE" : "MUTE"),
+        h("button", { type: "button", className: "dh2-stop", onClick: onStopVoice }, "STOP"),
+        h("button", {
+          type: "button",
+          className: "dh2-send",
+          onClick: onSubmit,
+          disabled: busy || !value.trim(),
+        }, busy ? "THINKING" : "SEND"),
+      ),
+    );
+  }
+
+  function FeatureStrip({ health, micSupported, voiceSupported, mode }) {
+    const transport = health
+      ? (health.api_server_configured ? "API SERVER" : "DIRECT FALLBACK")
+      : "PROBING";
+    const avatar = health?.avatar_model_configured ? "GLB CONFIGURED" : "PROCEDURAL READY";
+    return h(
+      "div",
+      { className: "dh2-features" },
+      h("span", null, mode === MODES.HUMAN ? "HUMAN RENDER" : "HOLOGRAM RENDER"),
+      h("span", null, avatar),
+      h("span", null, "MORPH / VISEME FACE"),
+      h("span", null, voiceSupported ? "TTS READY" : "TEXT ONLY"),
+      h("span", null, micSupported ? "MIC READY" : "MIC UNSUPPORTED"),
+      h("span", null, transport),
+    );
+  }
+
+  function DigitalHumanPage() {
+    const client = useMemo(() => new HermesAvatarClient(SDK.fetchJSON), []);
+    const visemes = useMemo(() => new VisemeMapper(), []);
+    const speechOutput = useMemo(() => new BrowserSpeechOutput(visemes), [visemes]);
+    const speechInput = useMemo(() => new BrowserSpeechInput(), []);
+    const controller = useMemo(() => new AvatarController(), []);
+    const conversationId = useMemo(createConversationId, []);
+
+    const [state, setState] = useState(STATES.IDLE);
+    const [mode, setMode] = useState(() => {
+      try { return localStorage.getItem("hermes.digitalHuman.mode") || MODES.HUMAN; }
+      catch { return MODES.HUMAN; }
+    });
+    const [input, setInput] = useState("");
+    const [messages, setMessages] = useState([]);
+    const [error, setError] = useState("");
+    const [voiceEnabled, setVoiceEnabled] = useState(true);
+    const [health, setHealth] = useState(null);
+    const [interim, setInterim] = useState("");
+    const endRef = useRef(null);
+
+    const transition = useCallback(next => {
+      setState(next);
+      controller.setState(next);
+    }, [controller]);
+
+    const changeMode = useCallback(next => {
+      setMode(next);
+      try { localStorage.setItem("hermes.digitalHuman.mode", next); } catch { /* ignore */ }
+    }, []);
+
+    useEffect(() => {
+      client.health().then(setHealth).catch(() => setHealth(null));
+      return () => {
+        speechOutput.stop();
+        speechInput.stop();
+        controller.destroy();
+      };
+    }, [client, speechInput, speechOutput, controller]);
+
+    useEffect(() => {
+      endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    }, [messages, state]);
+
+    const speakReply = useCallback(text => {
+      if (!voiceEnabled || !speechOutput.supported) {
+        transition(STATES.IDLE);
+        return;
+      }
+      speechOutput.speak(text, {
+        onStart: () => transition(STATES.SPEAKING),
+        onViseme: value => controller.setViseme(value),
+        onEnd: () => {
+          controller.setViseme({ open: 0.03, round: 0, wide: 0.18, jaw: 0 });
+          transition(STATES.IDLE);
+        },
+        onError: () => {
+          controller.setViseme({ open: 0.03, round: 0, wide: 0.18, jaw: 0 });
+          transition(STATES.IDLE);
+        },
+      });
+    }, [controller, speechOutput, transition, voiceEnabled]);
+
+    const send = useCallback(async overrideText => {
+      const text = (overrideText || input).trim();
+      if (!text || state === STATES.THINKING) return;
+      speechOutput.stop();
+      controller.setViseme({ open: 0.03, round: 0, wide: 0.18, jaw: 0 });
+      setError("");
+      setInput("");
+      setInterim("");
+      setMessages(previous => [...previous, { id: `u-${Date.now()}`, role: "user", text }]);
+      transition(STATES.THINKING);
+
+      try {
+        const response = await client.send(text, conversationId);
+        const reply = String(response.reply || "").trim();
+        if (!reply) throw new Error("Hermes returned an empty reply.");
+        setMessages(previous => [...previous, {
+          id: `a-${Date.now()}`,
+          role: "assistant",
+          text: reply,
+          transport: response.transport === "api-server" ? "AGENT" : "DIRECT",
+        }]);
+        speakReply(reply);
+      } catch (requestError) {
+        setError(requestError instanceof Error ? requestError.message : "Unable to reach Hermes.");
+        transition(STATES.ERROR);
+      }
+    }, [client, conversationId, controller, input, speakReply, speechOutput, state, transition]);
+
+    const handleMic = useCallback(async () => {
+      if (!speechInput.supported || state === STATES.THINKING) return;
+      if (state === STATES.LISTENING) {
+        speechInput.stop();
+        transition(STATES.IDLE);
+        return;
+      }
+      speechOutput.stop();
+      setError("");
+      setInterim("");
+      transition(STATES.LISTENING);
+      try {
+        const text = await speechInput.listen({
+          onInterim: value => {
+            setInterim(value);
+            setInput(value);
+          },
+        });
+        setInput(text);
+        transition(STATES.IDLE);
+        await send(text);
+      } catch (micError) {
+        const message = micError instanceof Error ? micError.message : "Microphone recognition failed.";
+        if (!/did not catch/i.test(message)) setError(message);
+        transition(STATES.IDLE);
+      }
+    }, [send, speechInput, speechOutput, state, transition]);
+
+    const resetConversation = useCallback(() => {
+      speechOutput.stop();
+      speechInput.stop();
+      setMessages([]);
+      setError("");
+      setInput("");
+      setInterim("");
+      transition(STATES.IDLE);
+      try { sessionStorage.removeItem("hermes.digitalHuman.conversation.v3"); } catch { /* ignore */ }
+      window.location.reload();
+    }, [speechInput, speechOutput, transition]);
+
+    const modelUrl = health?.avatar_model_url || "";
+
+    return h(
+      "main",
+      { className: "dh2-page" },
+      h(
+        "header",
+        { className: "dh2-header" },
+        h(
+          "div",
+          null,
+          h("div", { className: "dh2-kicker" }, "HERMES // INTERACTIVE DIGITAL HUMAN"),
+          h("h1", null, "Digital Human"),
+          h("p", null, "A face-to-face Hermes interface with GLB characters, morph targets, gaze, speech and text."),
+        ),
+        h("button", { type: "button", className: "dh2-new", onClick: resetConversation }, "NEW SESSION"),
+      ),
+      h(FeatureStrip, {
+        health,
+        micSupported: speechInput.supported,
+        voiceSupported: speechOutput.supported,
+        mode,
+      }),
+      h(
+        "div",
+        { className: "dh2-workspace" },
+        h(AvatarStage, { controller, state, mode, onModeChange: changeMode, modelUrl }),
+        h(
+          "section",
+          { className: "dh2-chat", "aria-label": "Conversation with Hermes" },
+          h(
+            "div",
+            { className: "dh2-chat__header" },
+            h(
+              "div",
+              null,
+              h("span", { className: "dh2-kicker" }, "LIVE CHANNEL"),
+              h("strong", { dir: "auto" }, state === STATES.LISTENING && interim ? interim : "Conversation"),
+            ),
+            h(StatusPill, { state }),
+          ),
+          h(Transcript, { messages, thinking: state === STATES.THINKING, endRef }),
+          error && h(
+            "div",
+            { className: "dh2-error", role: "alert" },
+            h("div", null, h("strong", null, "Connection issue"), h("span", null, error)),
+            h("button", {
+              type: "button",
+              onClick: () => {
+                setError("");
+                transition(STATES.IDLE);
+              },
+            }, "Dismiss"),
+          ),
+          h(Composer, {
+            value: input,
+            onChange: setInput,
+            onSubmit: () => send(),
+            onMic: handleMic,
+            micSupported: speechInput.supported,
+            listening: state === STATES.LISTENING,
+            busy: state === STATES.THINKING,
+            voiceEnabled,
+            onToggleVoice: () => setVoiceEnabled(value => {
+              if (value) {
+                speechOutput.stop();
+                controller.setViseme({ open: 0.03, round: 0, wide: 0.18, jaw: 0 });
+                transition(STATES.IDLE);
+              }
+              return !value;
+            }),
+            onStopVoice: () => {
+              speechOutput.stop();
+              controller.setViseme({ open: 0.03, round: 0, wide: 0.18, jaw: 0 });
+              transition(STATES.IDLE);
+            },
+          }),
+        ),
+      ),
+      h(
+        "footer",
+        { className: "dh2-footer" },
+        h("span", null, modelUrl ? "Renderer: Three.js GLB + fallback" : "Renderer: Three.js procedural"),
+        h("span", null, "Face: Morph Targets + viseme + blink + gaze"),
+        h("span", null, "Voice: browser STT/TTS adapter"),
+        h("span", null, "AI: Hermes backend"),
+      ),
+    );
+  }
+
+  REGISTRY.register("hermes-avatar", DigitalHumanPage);
+})();

@@ -1,11 +1,11 @@
 {
   "name": "hermes-avatar",
   "label": "Digital Human",
-  "description": "Interactive 3D holographic avatar for conversational Hermes.",
+  "description": "Interactive 3D human avatar for conversational Hermes with voice, visemes and hologram mode.",
   "icon": "Sparkles",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "tab": { "path": "/digital-human", "position": "after:chat" },
-  "entry": "dist/index.js",
-  "css": "dist/style.css",
+  "entry": "dist/realistic.js",
+  "css": "dist/realistic.css",
   "api": "plugin_api.py"
 }

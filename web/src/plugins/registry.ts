@@ -85,6 +85,33 @@ export function getRegisteredCount(): number {
 }
 
 // ---------------------------------------------------------------------------
+// Optional graphics runtime — loaded only when a plugin asks for 3D support.
+// ---------------------------------------------------------------------------
+
+let _threeRuntimePromise: Promise<{
+  THREE: typeof import("three");
+  GLTFLoader: typeof import("three/examples/jsm/loaders/GLTFLoader.js").GLTFLoader;
+}> | null = null;
+
+/**
+ * Lazily load the dashboard's existing Three.js installation plus GLTFLoader.
+ * Keeping this behind an SDK method avoids a global THREE object, CDN scripts,
+ * duplicate React/Three bundles, and extra cost on the normal dashboard path.
+ */
+function loadThreeRuntime() {
+  if (!_threeRuntimePromise) {
+    _threeRuntimePromise = Promise.all([
+      import("three"),
+      import("three/examples/jsm/loaders/GLTFLoader.js"),
+    ]).then(([THREE, loaderModule]) => ({
+      THREE,
+      GLTFLoader: loaderModule.GLTFLoader,
+    }));
+  }
+  return _threeRuntimePromise;
+}
+
+// ---------------------------------------------------------------------------
 // Expose SDK + registry on window
 // ---------------------------------------------------------------------------
 
@@ -95,7 +122,7 @@ export function getRegisteredCount(): number {
  * Exposed at runtime as ``window.__HERMES_PLUGIN_SDK__.sdkVersion`` so a
  * plugin (or a future host-side compatibility gate) can read it.
  */
-export const SDK_CONTRACT_VERSION = "1.1.0";
+export const SDK_CONTRACT_VERSION = "1.2.0";
 
 // Window globals for the plugin SDK are declared in ``plugins/sdk.d.ts`` —
 // the single source of truth for the public contract. Don't redeclare them
@@ -138,6 +165,11 @@ export function exposePluginSDK() {
     // Lower-level: resolve just the [authParamName, authParamValue] pair, for
     // plugins that need to build the WS URL themselves.
     buildWsAuthParam,
+
+    // Heavy graphics dependencies stay code-split until a plugin requests them.
+    graphics: {
+      loadThreeRuntime,
+    },
 
     // UI components — Nous DS where available, shadcn/ui primitives elsewhere.
     components: {

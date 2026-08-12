@@ -84,6 +84,14 @@ class AvatarModelStorage:
     def exists(self) -> bool:
         return self.path().is_file()
 
+    def revision(self) -> str:
+        """Return a cheap cache-busting revision for the current persisted model."""
+        try:
+            stat = self.path().stat()
+        except OSError:
+            return ""
+        return f"{stat.st_mtime_ns:x}-{stat.st_size:x}"
+
     @staticmethod
     def _validate_glb(path: Path, total_bytes: int) -> None:
         with path.open("rb") as handle:
@@ -190,9 +198,13 @@ def _avatar_model_url() -> str:
 
 def _avatar_descriptor() -> dict:
     if _AVATAR_STORAGE.exists():
+        revision = _AVATAR_STORAGE.revision()
         return {
             "avatar_model_configured": True,
-            "avatar_model_url": "/api/plugins/hermes-avatar/avatar-model",
+            "avatar_model_url": (
+                f"/api/plugins/hermes-avatar/avatar-model?v={revision}"
+            ),
+            "avatar_model_revision": revision,
             "avatar_model_requires_auth": True,
             "avatar_provider": "uploaded-glb",
             "avatar_uploaded": True,
@@ -202,6 +214,7 @@ def _avatar_descriptor() -> dict:
     return {
         "avatar_model_configured": bool(configured_url),
         "avatar_model_url": configured_url,
+        "avatar_model_revision": "",
         "avatar_model_requires_auth": False,
         "avatar_provider": "configured-glb" if configured_url else "procedural",
         "avatar_uploaded": False,

@@ -1,11 +1,11 @@
 {
   "name": "hermes-avatar",
   "label": "Digital Human",
-  "description": "Interactive 3D human avatar for conversational Hermes with voice, visemes and hologram mode.",
+  "description": "Interactive 3D GLB-ready human avatar for Hermes with morph targets, voice, visemes and hologram mode.",
   "icon": "Sparkles",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "tab": { "path": "/digital-human", "position": "after:chat" },
-  "entry": "dist/realistic.js",
+  "entry": "dist/avatar-v3.js",
   "css": "dist/realistic.css",
   "api": "plugin_api.py"
 }

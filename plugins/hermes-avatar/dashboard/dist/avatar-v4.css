@@ -1,0 +1,40 @@
+@import url("/dashboard-plugins/hermes-avatar/dist/realistic.css");
+
+/* v0.4 avatar-management controls live in the page header. Keep their
+   responsive behavior scoped away from the chat composer's action row. */
+.dh2-header > .dh2-composer__actions {
+  margin-top: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: min(100%, 28rem);
+}
+
+.dh2-header > .dh2-composer__actions .dh2-new:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 680px) {
+  .dh2-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: .65rem;
+  }
+
+  .dh2-header > .dh2-composer__actions {
+    width: 100%;
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  .dh2-header > .dh2-composer__actions .dh2-new {
+    flex: 1 1 7.25rem;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 390px) {
+  .dh2-header > .dh2-composer__actions .dh2-new {
+    flex-basis: 100%;
+  }
+}

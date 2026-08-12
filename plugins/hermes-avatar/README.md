@@ -141,8 +141,8 @@ dashboard/
     └── realistic.css
 ```
 
-The older `index.js` / `style.css` pair remains on the feature branch only as a
-rollback reference while v0.2 is reviewed.
+Only the active v0.2 runtime assets are kept in the plugin so the merged feature
+contains no superseded renderer or stylesheet.
 
 ## Validation
 

@@ -31,8 +31,11 @@ def _load_plugin_api():
     return module
 
 
-def _minimal_glb() -> bytes:
-    json_chunk = b'{"asset":{"version":"2.0"}}'
+def _minimal_glb(name: str = "") -> bytes:
+    payload = {"asset": {"version": "2.0"}}
+    if name:
+        payload["extras"] = {"name": name}
+    json_chunk = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     json_chunk += b" " * (-len(json_chunk) % 4)
     total_length = 12 + 8 + len(json_chunk)
     return (
@@ -169,12 +172,29 @@ def test_avatar_upload_get_delete_lifecycle(avatar_client):
     assert uploaded_data["avatar_model_requires_auth"] is True
     assert uploaded_data["uploaded_bytes"] == len(glb)
 
+    first_revision = uploaded_data["avatar_model_revision"]
+    first_url = uploaded_data["avatar_model_url"]
+    assert first_revision
+    assert f"?v={first_revision}" in first_url
+
     stored = home / "dashboard-assets" / "hermes-avatar" / "avatar.glb"
     assert stored.read_bytes() == glb
 
+    replacement = _minimal_glb("replacement")
+    replaced = client.put(
+        "/api/plugins/hermes-avatar/avatar-model",
+        content=replacement,
+        headers={"Content-Type": "model/gltf-binary"},
+    )
+    assert replaced.status_code == 200, replaced.text
+    replaced_data = replaced.json()
+    assert replaced_data["avatar_model_revision"] != first_revision
+    assert replaced_data["avatar_model_url"] != first_url
+    assert stored.read_bytes() == replacement
+
     fetched = client.get("/api/plugins/hermes-avatar/avatar-model")
     assert fetched.status_code == 200
-    assert fetched.content == glb
+    assert fetched.content == replacement
     assert fetched.headers["content-type"].startswith("model/gltf-binary")
     assert fetched.headers["cache-control"] == "no-store"
 

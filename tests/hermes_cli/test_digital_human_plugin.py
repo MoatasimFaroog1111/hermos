@@ -68,13 +68,24 @@ def test_manifest_points_to_v4_runtime_assets():
     assert manifest["version"] == "0.4.0"
     assert manifest["tab"]["path"] == "/digital-human"
     assert manifest["entry"] == "dist/avatar-v4.js"
-    assert manifest["css"] == "dist/realistic.css"
+    assert manifest["css"] == "dist/avatar-v4.css"
     assert manifest["api"] == "plugin_api.py"
 
     for relative_path in (manifest["entry"], manifest["css"], manifest["api"]):
         assert (_PLUGIN_DIR / relative_path).is_file(), relative_path
 
+    assert (_PLUGIN_DIR / "dist" / "realistic.css").is_file()
     assert (_PLUGIN_DIR / "dist" / "three-avatar-renderer.js").is_file()
+
+
+def test_v4_styles_preserve_base_ui_and_wrap_avatar_controls():
+    source = (_PLUGIN_DIR / "dist" / "avatar-v4.css").read_text(encoding="utf-8")
+
+    assert "/dashboard-plugins/hermes-avatar/dist/realistic.css" in source
+    assert ".dh2-header > .dh2-composer__actions" in source
+    assert "flex-wrap: wrap" in source
+    assert "flex-direction: column" in source
+    assert "max-width: 390px" in source
 
 
 def test_v4_entry_registers_plugin_and_supports_secure_upload():

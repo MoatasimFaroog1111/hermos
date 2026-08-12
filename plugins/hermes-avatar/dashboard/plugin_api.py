@@ -70,6 +70,16 @@ def _api_server_url() -> str:
     return f"http://{host}:{port}/v1/responses"
 
 
+def _avatar_model_url() -> str:
+    """Return a browser-safe GLB URL without turning the backend into a proxy."""
+    value = (os.getenv("HERMES_AVATAR_GLB_URL") or "").strip()
+    if not value:
+        return ""
+    if value.startswith("/") or value.startswith("https://"):
+        return value
+    return ""
+
+
 def _extract_responses_text(payload: dict) -> str:
     chunks: list[str] = []
     for item in payload.get("output") or []:
@@ -137,14 +147,28 @@ def _direct_hermes_turn(message: str, conversation_id: str) -> str:
 
 @router.get("/health")
 async def health():
+    avatar_model_url = _avatar_model_url()
     return {
         "plugin": "hermes-avatar",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "api_server_configured": bool((os.getenv("API_SERVER_KEY") or "").strip()),
         "speech": "browser",
-        "renderer": "procedural-webgl-human",
+        "renderer": "three-glb-with-procedural-fallback",
         "visual_modes": ["human", "hologram"],
-        "facial_channels": ["blink", "jaw", "mouth_open", "mouth_round", "mouth_wide", "smile", "brow", "gaze"],
+        "avatar_model_configured": bool(avatar_model_url),
+        "avatar_model_url": avatar_model_url,
+        "avatar_provider": "glb" if avatar_model_url else "procedural",
+        "facial_channels": [
+            "blink",
+            "jaw",
+            "mouth_open",
+            "mouth_round",
+            "mouth_wide",
+            "smile",
+            "brow",
+            "gaze",
+        ],
+        "morph_targets": True,
     }
 
 

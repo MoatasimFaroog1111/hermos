@@ -139,10 +139,12 @@ def _direct_hermes_turn(message: str, conversation_id: str) -> str:
 async def health():
     return {
         "plugin": "hermes-avatar",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "api_server_configured": bool((os.getenv("API_SERVER_KEY") or "").strip()),
         "speech": "browser",
-        "renderer": "webgl",
+        "renderer": "procedural-webgl-human",
+        "visual_modes": ["human", "hologram"],
+        "facial_channels": ["blink", "jaw", "mouth_open", "mouth_round", "mouth_wide", "smile", "brow", "gaze"],
     }
 
 

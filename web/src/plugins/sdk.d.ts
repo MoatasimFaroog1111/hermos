@@ -76,6 +76,12 @@ export type BuildWsUrl = (
 /** Lower-level: just the ``[authParamName, authParamValue]`` pair. */
 export type BuildWsAuthParam = () => Promise<[string, string]>;
 
+/** Code-split Three.js runtime shared by plugins that opt into 3D rendering. */
+export interface HermesPluginThreeRuntime {
+  THREE: typeof import("three");
+  GLTFLoader: typeof import("three/examples/jsm/loaders/GLTFLoader.js").GLTFLoader;
+}
+
 // ---------------------------------------------------------------------------
 // Registry surface (window.__HERMES_PLUGINS__)
 // ---------------------------------------------------------------------------
@@ -123,6 +129,14 @@ export interface HermesPluginSDK {
   buildWsUrl: BuildWsUrl;
   /** Resolve just the WS auth query-param pair. */
   buildWsAuthParam: BuildWsAuthParam;
+
+  /**
+   * Optional heavy graphics support. The host code-splits these modules so
+   * ordinary dashboard/plugin paths do not pay the Three.js startup cost.
+   */
+  graphics: {
+    loadThreeRuntime: () => Promise<HermesPluginThreeRuntime>;
+  };
 
   /**
    * Shared UI primitives (Nous DS / shadcn). Typed permissively at the

@@ -61,12 +61,16 @@ jobs:
       - name: Build ui-tui workspace
         run: npm run build --workspace hermes-tui
 
-  generate-three-types-fix:
+  apply-three-types-fix:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout code
+      - name: Checkout PR head branch
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
 
       - name: Set up Node 22
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -74,10 +78,15 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Generate exact package metadata fix
+      - name: Generate and commit exact Three type metadata
         env:
           npm_config_install_links: "false"
         run: |
+          if grep -q '"@types/three"' web/package.json; then
+            echo "@types/three is already recorded; no write needed."
+            exit 0
+          fi
+
           npm install \
             --workspace web \
             --save-dev \
@@ -85,15 +94,11 @@ jobs:
             --ignore-scripts \
             --no-audit \
             @types/three@0.180.0
+
           git diff --check
           git diff -- web/package.json package-lock.json
-
-      - name: Upload generated package metadata
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: three-types-package-fix
-          path: |
-            web/package.json
-            package-lock.json
-          if-no-files-found: error
-          retention-days: 1
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/package.json package-lock.json
+          git commit -m "Add Three.js TypeScript declarations"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}

@@ -30,8 +30,12 @@ jobs:
   # Build and test the image for each architecture. This job runs PR code,
   # so it must remain secret-free. Publishing happens in the separate,
   # protected publish job after these tests pass.
+  #
+  # The user's deployment fork also runs this secret-free build/test job so
+  # Railway-bound Docker changes receive the same image-level validation.
+  # Publish/merge remain restricted to the upstream repository below.
   build:
-    if: github.repository == 'NousResearch/hermes-agent'
+    if: github.repository == 'NousResearch/hermes-agent' || github.repository == 'MoatasimFaroog1111/hermos'
     strategy:
       fail-fast: false
       matrix:

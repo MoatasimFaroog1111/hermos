@@ -32,16 +32,26 @@ jobs:
         run: |
           from pathlib import Path
 
-          source = Path("Dockerfile").read_text()
-          combined = "RUN cd web && npm run build && \\\n              cd ../ui-tui && npm run build"
-          split = "RUN cd web && npm run build\nRUN cd ui-tui && npm run build"
+          path = Path("Dockerfile")
+          lines = path.read_text().splitlines()
+          match = None
 
-          if combined not in source:
+          for index in range(len(lines) - 1):
+              if (
+                  lines[index].startswith("RUN cd web && npm run build")
+                  and lines[index + 1].strip() == "cd ../ui-tui && npm run build"
+              ):
+                  match = index
+                  break
+
+          if match is None:
               raise SystemExit("Expected combined frontend build step not found in Dockerfile")
 
-          Path("Dockerfile.frontend-diagnostics").write_text(
-              source.replace(combined, split, 1)
-          )
+          lines[match : match + 2] = [
+              "RUN cd web && npm run build",
+              "RUN cd ui-tui && npm run build",
+          ]
+          Path("Dockerfile.frontend-diagnostics").write_text("\n".join(lines) + "\n")
 
       - name: Build image with split frontend layers
         run: |

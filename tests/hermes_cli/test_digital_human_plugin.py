@@ -65,7 +65,7 @@ def test_manifest_points_to_v4_runtime_assets():
     manifest = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
 
     assert manifest["name"] == "hermes-avatar"
-    assert manifest["version"] == "0.4.0"
+    assert manifest["version"] == "0.5.0"
     assert manifest["tab"]["path"] == "/digital-human"
     assert manifest["entry"] == "dist/avatar-v4.js"
     assert manifest["css"] == "dist/avatar-v4.css"

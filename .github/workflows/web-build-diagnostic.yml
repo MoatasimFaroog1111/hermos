@@ -1,0 +1,44 @@
+name: Web Build Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "package.json"
+      - "package-lock.json"
+      - "apps/shared/**"
+      - ".github/workflows/web-build-diagnostic.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-build-diagnostic-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install monorepo dependencies like Docker
+        env:
+          npm_config_install_links: "false"
+        run: npm install --prefer-offline --no-audit --fetch-retries=5
+
+      - name: Type-check web
+        run: npx tsc -b web
+
+      - name: Build web with Vite
+        working-directory: web
+        run: npm exec vite build -- --debug

@@ -23,6 +23,32 @@
     return String(name || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
   }
 
+  function perspectiveFitDistance({
+    width = 0,
+    height = 0,
+    depth = 0,
+    fovDegrees = 28,
+    aspect = 1,
+    padding = 1.12,
+  } = {}) {
+    const safeWidth = Math.max(0, Number(width) || 0);
+    const safeHeight = Math.max(0, Number(height) || 0);
+    const safeDepth = Math.max(0, Number(depth) || 0);
+    const safeFov = clamp(Number(fovDegrees) || 28, 1, 179);
+    const safeAspect = Math.max(0.05, Number(aspect) || 1);
+    const safePadding = Math.max(1, Number(padding) || 1);
+    const tanHalfFov = Math.tan((safeFov * Math.PI / 180) / 2);
+    if (!Number.isFinite(tanHalfFov) || tanHalfFov <= 0) return 4.7;
+
+    const heightDistance = safeHeight / (2 * tanHalfFov);
+    const widthDistance = safeWidth / (2 * tanHalfFov * safeAspect);
+    const depthAllowance = safeDepth * 0.5;
+    return Math.max(
+      0.5,
+      (Math.max(heightDistance, widthDistance) + depthAllowance) * safePadding,
+    );
+  }
+
   class ThreeAvatarRenderer {
     constructor(canvas, controller, options = {}) {
       this.canvas = canvas;
@@ -41,6 +67,7 @@
       this.raf = 0;
       this.destroyed = false;
       this.procedural = false;
+      this.framedRoot = null;
       this.reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches || false;
       this.unsubscribe = controller.subscribe(signals => { this.signals = signals; });
       this.onPointerMove = event => this.trackPointer(event);
@@ -148,6 +175,32 @@
       root.position.x -= center.x;
       root.position.y -= center.y - 0.05;
       root.position.z -= center.z;
+      this.framedRoot = root;
+    }
+
+    frameModel(root) {
+      if (!root || !this.camera || !this.THREE) return;
+      const THREE = this.THREE;
+      const box = new THREE.Box3().setFromObject(root);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      if (
+        !Number.isFinite(size.x)
+        || !Number.isFinite(size.y)
+        || !Number.isFinite(size.z)
+        || size.y <= 0
+      ) return;
+
+      const distance = perspectiveFitDistance({
+        width: size.x,
+        height: size.y,
+        depth: size.z,
+        fovDegrees: this.camera.fov,
+        aspect: this.camera.aspect,
+        padding: 1.12,
+      });
+      this.camera.position.set(center.x, center.y, center.z + distance);
+      this.camera.lookAt(center.x, center.y, center.z);
     }
 
     indexModel(root) {
@@ -275,6 +328,7 @@
       const height = Math.max(1, Math.round(rect.height));
       this.renderer.setSize(width, height, false);
       this.camera.aspect = width / Math.max(height, 1);
+      if (this.framedRoot && !this.procedural) this.frameModel(this.framedRoot);
       this.camera.updateProjectionMatrix();
     }
 
@@ -441,5 +495,6 @@
     ThreeAvatarRenderer,
     MODES,
     morphAliases: MORPH_ALIASES,
+    perspectiveFitDistance,
   });
 })();

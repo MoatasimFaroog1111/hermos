@@ -65,17 +65,30 @@ def test_manifest_points_to_v4_runtime_assets():
     manifest = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
 
     assert manifest["name"] == "hermes-avatar"
-    assert manifest["version"] == "0.5.0"
+    assert manifest["version"] == "0.6.0"
     assert manifest["tab"]["path"] == "/digital-human"
-    assert manifest["entry"] == "dist/avatar-v4.js"
+    assert manifest["entry"] == "dist/female-voice-entry.js"
     assert manifest["css"] == "dist/avatar-v4.css"
     assert manifest["api"] == "plugin_api.py"
 
     for relative_path in (manifest["entry"], manifest["css"], manifest["api"]):
         assert (_PLUGIN_DIR / relative_path).is_file(), relative_path
 
+    assert (_PLUGIN_DIR / "dist" / "avatar-v4.js").is_file()
     assert (_PLUGIN_DIR / "dist" / "realistic.css").is_file()
     assert (_PLUGIN_DIR / "dist" / "three-avatar-renderer.js").is_file()
+
+
+def test_female_voice_entry_prefers_natural_female_voices_and_loads_avatar():
+    source = (_PLUGIN_DIR / "dist" / "female-voice-entry.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "speechSynthesis" in source
+    assert "chooseFemaleVoice" in source
+    assert "natural|neural|online|premium|enhanced|studio|wavenet" in source
+    assert "zira|samantha|victoria" in source
+    assert "/dashboard-plugins/hermes-avatar/dist/avatar-v4.js" in source
 
 
 def test_v4_styles_preserve_base_ui_and_wrap_avatar_controls():

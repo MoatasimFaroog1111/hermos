@@ -243,7 +243,19 @@
       root.position.x -= center.x;
       root.position.y -= center.y - 0.05;
       root.position.z -= center.z;
+      root.userData.__dhFrameAnchor = {
+        position: root.position.clone(),
+        scale: root.scale.clone(),
+      };
       this.framedRoot = root;
+    }
+
+    restoreModelFrameAnchor() {
+      const root = this.framedRoot;
+      const anchor = root?.userData?.__dhFrameAnchor;
+      if (!root || !anchor) return;
+      root.position.copy(anchor.position);
+      root.scale.copy(anchor.scale);
     }
 
     frameModel(root) {
@@ -259,13 +271,14 @@
         || size.y <= 0
       ) return;
 
+      const compact = this.canvas.getBoundingClientRect().width <= 700;
       const distance = perspectiveFitDistance({
         width: size.x,
         height: size.y,
         depth: size.z,
         fovDegrees: this.camera.fov,
         aspect: this.camera.aspect,
-        padding: 1.12,
+        padding: compact ? 1.28 : 1.14,
       });
       this.camera.position.set(center.x, center.y, center.z + distance);
       this.camera.lookAt(center.x, center.y, center.z);
@@ -448,7 +461,10 @@
       const height = Math.max(1, Math.round(rect.height));
       this.renderer.setSize(width, height, false);
       this.camera.aspect = width / Math.max(height, 1);
-      if (this.framedRoot && !this.procedural) this.frameModel(this.framedRoot);
+      if (this.framedRoot && !this.procedural) {
+        this.restoreModelFrameAnchor();
+        this.frameModel(this.framedRoot);
+      }
       this.camera.updateProjectionMatrix();
     }
 
@@ -707,6 +723,7 @@
       // is layered on top instead of being overwritten by the animation clip.
       this.clearMotionPose();
       if (this.mixer) this.mixer.update(deltaTime);
+      if (!this.procedural) this.restoreModelFrameAnchor();
       this.applyCharacterMotion(time, deltaTime);
 
       if (this.procedural) this.applyProceduralSignals();

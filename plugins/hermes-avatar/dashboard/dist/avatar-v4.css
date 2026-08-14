@@ -31,10 +31,57 @@
     flex: 1 1 7.25rem;
     min-width: 0;
   }
+
+  /* Mobile Digital Human framing.
+     The GLB camera recalculates its fit from the canvas aspect ratio. A narrow,
+     centered portrait viewport gives full-body models enough vertical room and
+     prevents the head/shoulders from being clipped on phone screens. */
+  .dh2-stage {
+    min-height: clamp(34rem, 72svh, 40rem);
+  }
+
+  .dh2-stage__canvas {
+    left: 50%;
+    right: auto;
+    top: 3.45rem;
+    bottom: 2.75rem;
+    width: min(58%, 15.5rem);
+    height: calc(100% - 6.2rem);
+    transform: translateX(-50%);
+    transform-origin: center center;
+  }
+
+  /* Keep the conversation useful on mobile without forcing a second
+     desktop-sized viewport of empty transcript before the composer. */
+  .dh2-chat {
+    min-height: 0;
+  }
+
+  .dh2-transcript {
+    min-height: 12rem;
+    max-height: min(46svh, 28rem);
+  }
+
+  .dh2-empty {
+    margin: clamp(1.5rem, 8svh, 4rem) auto;
+    padding-inline: .75rem;
+  }
 }
 
 @media (max-width: 390px) {
   .dh2-header > .dh2-composer__actions .dh2-new {
     flex-basis: 100%;
+  }
+
+  .dh2-stage {
+    min-height: clamp(32rem, 70svh, 37rem);
+  }
+
+  .dh2-stage__canvas {
+    width: min(55%, 13rem);
+  }
+
+  .dh2-transcript {
+    min-height: 10.5rem;
   }
 }

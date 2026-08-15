@@ -8,6 +8,8 @@
     SPEAKING: "speaking",
     ERROR: "error",
   });
+  const VERSION = "1.0.0";
+  const MODULE_FLAG = "__humanBehaviorV1";
 
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -26,10 +28,6 @@
     next() {
       this.seed = this.seed * 16807 % 2147483647;
       return (this.seed - 1) / 2147483646;
-    }
-
-    signed() {
-      return this.next() * 2 - 1;
     }
 
     range(min, max) {
@@ -61,8 +59,12 @@
           this.nextShiftAt = time + this.noise.range(1.3, 2.8);
         } else if (directAttention) {
           const briefBreak = this.noise.next() < 0.18;
-          this.targetYaw = briefBreak ? this.noise.range(-0.10, 0.10) : this.noise.range(-0.025, 0.025);
-          this.targetPitch = briefBreak ? this.noise.range(-0.035, 0.035) : this.noise.range(-0.012, 0.012);
+          this.targetYaw = briefBreak
+            ? this.noise.range(-0.10, 0.10)
+            : this.noise.range(-0.025, 0.025);
+          this.targetPitch = briefBreak
+            ? this.noise.range(-0.035, 0.035)
+            : this.noise.range(-0.012, 0.012);
           this.nextShiftAt = time + this.noise.range(1.8, 4.1);
         } else {
           this.targetYaw = this.noise.range(-0.11, 0.11);
@@ -311,8 +313,176 @@
     }
   }
 
+  function decorateRendererModule(module) {
+    if (!module || module[MODULE_FLAG] || !module.ThreeAvatarRenderer) return module;
+    const BaseRenderer = module.ThreeAvatarRenderer;
+
+    class HumanizedThreeAvatarRenderer extends BaseRenderer {
+      constructor(...args) {
+        super(...args);
+        this.humanBehavior = new HumanBehaviorEngine({
+          reducedMotion: this.reducedMotion,
+        });
+        this.humanOutput = this.humanBehavior.snapshot();
+      }
+
+      applyCharacterMotion(time, deltaTime) {
+        this.humanOutput = this.humanBehavior.update({
+          time,
+          deltaTime,
+          signals: this.signals,
+          pointer: {
+            active: this.pointerActive,
+            yaw: this.pointerYaw,
+            pitch: this.pointerPitch,
+          },
+        });
+
+        super.applyCharacterMotion(time, deltaTime);
+        this.applyHumanMotion();
+      }
+
+      applyHumanMotion() {
+        const human = this.humanOutput || this.humanBehavior.snapshot();
+        const head = this.rig?.head || this.head || this.rig?.neck || this.root;
+        const neck = this.rig?.neck || null;
+        const torso = this.rig?.chest || this.rig?.hips || this.root;
+
+        this.applyMotion(head, {
+          rx: human.gazePitch * 0.62 + human.headNod,
+          ry: human.gazeYaw * 0.72,
+          rz: human.weightShift * 0.28,
+        });
+
+        if (neck && neck !== head) {
+          this.applyMotion(neck, {
+            rx: human.gazePitch * 0.18 + human.headNod * 0.22,
+            ry: human.gazeYaw * 0.22,
+            rz: human.weightShift * 0.12,
+          });
+        }
+
+        if (torso && torso !== head) {
+          this.applyMotion(torso, {
+            rx: human.breath * 0.28,
+            ry: human.torsoYaw,
+            rz: human.weightShift,
+            px: human.weightShift * 0.45,
+            py: human.breath * 0.17,
+          });
+        }
+
+        const eyeRotation = {
+          rx: human.eyePitch * 0.34,
+          ry: human.eyeYaw * 0.42,
+        };
+        this.applyMotion(this.eyeLeft, eyeRotation);
+        this.applyMotion(this.eyeRight, eyeRotation);
+
+        const gesture = human.gesture * 0.11;
+        const leftEnergy = human.gestureSide > 0 ? gesture : gesture * 0.42;
+        const rightEnergy = human.gestureSide < 0 ? gesture : gesture * 0.42;
+        this.applyMotion(this.leftShoulder, {
+          rx: -leftEnergy * 0.24,
+          rz: leftEnergy * 0.34 + human.shoulderLift,
+        });
+        this.applyMotion(this.rightShoulder, {
+          rx: -rightEnergy * 0.24,
+          rz: -rightEnergy * 0.34 - human.shoulderLift,
+        });
+        this.applyMotion(this.leftUpperArm, {
+          rx: -leftEnergy * 0.42,
+          rz: leftEnergy * 0.62,
+        });
+        this.applyMotion(this.rightUpperArm, {
+          rx: -rightEnergy * 0.42,
+          rz: -rightEnergy * 0.62,
+        });
+      }
+
+      withHumanSignals(callback) {
+        const originalSignals = this.signals;
+        const human = this.humanOutput || this.humanBehavior.snapshot();
+        this.signals = {
+          ...originalSignals,
+          blink: human.blink,
+          smile: human.smile,
+          browLift: human.brow,
+        };
+        try {
+          return callback();
+        } finally {
+          this.signals = originalSignals;
+        }
+      }
+
+      applyGLBSignals() {
+        this.withHumanSignals(() => super.applyGLBSignals());
+        const squint = this.humanOutput?.squint || 0;
+        this.setMorph(["eyeSquintLeft", "EyeSquintLeft", "eyeSquint_L"], squint);
+        this.setMorph(["eyeSquintRight", "EyeSquintRight", "eyeSquint_R"], squint);
+      }
+
+      applyProceduralSignals() {
+        const human = this.humanOutput || this.humanBehavior.snapshot();
+        const yaw = this.currentYaw;
+        const pitch = this.currentPitch;
+        this.currentYaw += human.eyeYaw * 0.48;
+        this.currentPitch += human.eyePitch * 0.42;
+        try {
+          this.withHumanSignals(() => super.applyProceduralSignals());
+        } finally {
+          this.currentYaw = yaw;
+          this.currentPitch = pitch;
+        }
+      }
+
+      destroy() {
+        this.humanBehavior = null;
+        this.humanOutput = null;
+        super.destroy();
+      }
+    }
+
+    return Object.freeze({
+      ...module,
+      ThreeAvatarRenderer: HumanizedThreeAvatarRenderer,
+      HumanBehaviorEngine,
+      humanBehaviorVersion: VERSION,
+      [MODULE_FLAG]: true,
+    });
+  }
+
+  function installRendererHook() {
+    const key = "__HERMES_AVATAR_RENDERER__";
+    const existing = window[key];
+    if (existing) {
+      window[key] = decorateRendererModule(existing);
+      return;
+    }
+
+    let assigned;
+    const descriptor = Object.getOwnPropertyDescriptor(window, key);
+    if (descriptor && descriptor.configurable === false) return;
+
+    Object.defineProperty(window, key, {
+      configurable: true,
+      enumerable: false,
+      get() {
+        return assigned;
+      },
+      set(value) {
+        assigned = decorateRendererModule(value);
+      },
+    });
+  }
+
   window.__HERMES_HUMAN_BEHAVIOR__ = Object.freeze({
     HumanBehaviorEngine,
     STATES,
+    VERSION,
+    decorateRendererModule,
   });
+
+  installRendererHook();
 })();

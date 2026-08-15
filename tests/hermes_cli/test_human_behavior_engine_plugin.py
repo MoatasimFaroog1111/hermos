@@ -1,8 +1,8 @@
 """Focused smoke coverage for the Hermes Human Behavior Engine."""
 
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]

@@ -14,6 +14,31 @@
   cursor: not-allowed;
 }
 
+/* Explicit voice-call affordance. The underlying microphone behavior stays
+   isolated in the Digital Human runtime; this layer only makes the action
+   obvious and touch-friendly. */
+.dh2-composer__actions .dh2-call {
+  min-width: 7.25rem;
+  padding-inline: .85rem;
+  border-color: rgba(102, 231, 255, .38);
+  background: linear-gradient(135deg, rgba(26, 130, 151, .72), rgba(18, 88, 112, .62));
+  color: #effdff;
+  box-shadow: 0 7px 20px rgba(25, 153, 190, .12);
+}
+
+.dh2-composer__actions .dh2-call::before {
+  content: "☎";
+  margin-right: .42rem;
+  font-size: .82rem;
+}
+
+.dh2-composer__actions .dh2-call.is-live {
+  border-color: rgba(255, 109, 139, .62);
+  background: linear-gradient(135deg, rgba(145, 38, 68, .84), rgba(92, 23, 48, .78));
+  color: #fff3f6;
+  box-shadow: 0 0 0 3px rgba(255, 109, 139, .08), 0 8px 24px rgba(145, 38, 68, .18);
+}
+
 @media (max-width: 680px) {
   .dh2-header {
     flex-direction: column;
@@ -30,6 +55,12 @@
   .dh2-header > .dh2-composer__actions .dh2-new {
     flex: 1 1 7.25rem;
     min-width: 0;
+  }
+
+  .dh2-composer__actions .dh2-call {
+    min-width: 8.5rem;
+    min-height: 2.7rem;
+    flex: 1 1 8.5rem;
   }
 
   /* Mobile Digital Human framing.

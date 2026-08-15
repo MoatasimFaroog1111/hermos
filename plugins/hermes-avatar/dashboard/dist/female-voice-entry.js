@@ -6,6 +6,43 @@
   const CALL_UX_FLAG = "__HERMES_VOICE_CALL_UX__";
   const CALL_AUTO_REPLY_FLAG = "__HERMES_VOICE_CALL_AUTO_REPLY__";
   const AVATAR_READY_FLAG = "__HERMES_AVATAR_ENTRY_LOADED__";
+  const SDK = window.__HERMES_PLUGIN_SDK__;
+  const REGISTRY = window.__HERMES_PLUGINS__;
+
+  if (!SDK || !REGISTRY) {
+    console.error("[hermes-avatar] Hermes plugin SDK/registry is unavailable.");
+    return;
+  }
+
+  const h = SDK.React.createElement;
+
+  function DigitalHumanBootstrapPage() {
+    return h(
+      "main",
+      {
+        className: "dh2-page",
+        role: "status",
+        "aria-live": "polite",
+        "aria-busy": "true",
+      },
+      h(
+        "header",
+        { className: "dh2-header" },
+        h(
+          "div",
+          null,
+          h("div", { className: "dh2-kicker" }, "HERMES // DIGITAL HUMAN"),
+          h("h1", null, "Digital Human"),
+          h("p", null, "Loading avatar, voice and behavior runtime..."),
+        ),
+      ),
+    );
+  }
+
+  // The dashboard validates plugin registration in the first microtask after
+  // this entry script loads. Register a lightweight page synchronously, then
+  // avatar-v4.js replaces it with the full DigitalHumanPage when ready.
+  REGISTRY.register("hermes-avatar", DigitalHumanBootstrapPage);
 
   function normalizeBasePath(value) {
     const raw = String(value || "").trim();

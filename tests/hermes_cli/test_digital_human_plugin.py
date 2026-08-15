@@ -65,7 +65,7 @@ def test_manifest_points_to_v4_runtime_assets():
     manifest = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
 
     assert manifest["name"] == "hermes-avatar"
-    assert manifest["version"] == "0.6.0"
+    assert manifest["version"] == "0.7.0"
     assert manifest["tab"]["path"] == "/digital-human"
     assert manifest["entry"] == "dist/female-voice-entry.js"
     assert manifest["css"] == "dist/avatar-v4.css"
@@ -77,6 +77,7 @@ def test_manifest_points_to_v4_runtime_assets():
     assert (_PLUGIN_DIR / "dist" / "avatar-v4.js").is_file()
     assert (_PLUGIN_DIR / "dist" / "realistic.css").is_file()
     assert (_PLUGIN_DIR / "dist" / "three-avatar-renderer.js").is_file()
+    assert (_PLUGIN_DIR / "dist" / "human-behavior-engine.js").is_file()
 
 
 def test_female_voice_entry_prefers_natural_female_voices_and_loads_avatar():
@@ -89,6 +90,7 @@ def test_female_voice_entry_prefers_natural_female_voices_and_loads_avatar():
     assert "natural|neural|online|premium|enhanced|studio|wavenet" in source
     assert "zira|samantha|victoria" in source
     assert "/dashboard-plugins/hermes-avatar/dist/avatar-v4.js" in source
+    assert "/dashboard-plugins/hermes-avatar/dist/human-behavior-engine.js" in source
 
 
 def test_v4_styles_preserve_base_ui_and_wrap_avatar_controls():

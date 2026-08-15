@@ -1,6 +1,8 @@
 """Focused smoke coverage for the Hermes Human Behavior Engine."""
 
 from pathlib import Path
+import shutil
+import subprocess
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -53,3 +55,23 @@ def test_behavior_layer_fails_open_to_existing_avatar_motion():
 
     assert "human behavior engine unavailable; continuing with base motion" in source
     assert "startAvatar();" in source
+
+
+def test_human_behavior_runtime_javascript_parses_when_node_is_available():
+    node = shutil.which("node")
+    if node is None:
+        return
+
+    for filename in (
+        "human-behavior-engine.js",
+        "female-voice-entry.js",
+        "avatar-v4.js",
+        "three-avatar-renderer.js",
+    ):
+        result = subprocess.run(
+            [node, "--check", str(_DIST / filename)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"{filename}: {result.stderr}"

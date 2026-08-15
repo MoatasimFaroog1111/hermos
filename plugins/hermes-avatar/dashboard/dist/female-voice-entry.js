@@ -5,6 +5,7 @@
   const PATCH_FLAG = "__HERMES_FEMALE_VOICE_PATCHED__";
   const CALL_UX_FLAG = "__HERMES_VOICE_CALL_UX__";
   const CALL_AUTO_REPLY_FLAG = "__HERMES_VOICE_CALL_AUTO_REPLY__";
+  const AVATAR_READY_FLAG = "__HERMES_AVATAR_ENTRY_LOADED__";
 
   function normalizeBasePath(value) {
     const raw = String(value || "").trim();
@@ -29,6 +30,7 @@
   const AVATAR_ENTRY = pluginAssetUrl("avatar-v4.js");
   const HUMAN_BEHAVIOR_ENTRY = pluginAssetUrl("human-behavior-engine.js");
   const RENDERER_ENTRY = pluginAssetUrl("three-avatar-renderer.js");
+  const REALISTIC_STYLE = pluginAssetUrl("realistic.css");
 
   // Legacy root-path examples retained for smoke-test/documentation compatibility:
   // /dashboard-plugins/hermes-avatar/dist/avatar-v4.js
@@ -184,6 +186,17 @@
     refreshVoiceCallButton();
   }
 
+  function ensureStylesheet(href) {
+    const exists = Array.from(document.styleSheets || []).some(sheet => sheet.href === href)
+      || Boolean(document.querySelector(`link[href="${href}"]`));
+    if (exists) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = href;
+    link.setAttribute("data-hermes-avatar-base-style", "1");
+    document.head.appendChild(link);
+  }
+
   function findScript(src) {
     return Array.from(document.scripts).find(script => script.src === src) || null;
   }
@@ -220,20 +233,15 @@
     document.body.appendChild(script);
   }
 
-  function pluginRegistered() {
-    try {
-      return Boolean(window.__HERMES_PLUGINS__ && window.__HERMES_PLUGIN_SDK__);
-    } catch {
-      return false;
-    }
-  }
-
   function loadAvatarEntry() {
     const startAvatar = () => {
       appendScript(
         AVATAR_ENTRY,
-        () => false,
-        refreshVoiceCallButton,
+        () => Boolean(window[AVATAR_READY_FLAG]),
+        () => {
+          window[AVATAR_READY_FLAG] = true;
+          refreshVoiceCallButton();
+        },
         error => console.error("[hermes-avatar] unable to load avatar runtime", error),
       );
     };
@@ -250,9 +258,7 @@
       );
     };
 
-    if (!pluginRegistered()) {
-      console.warn("[hermes-avatar] dashboard plugin SDK is not ready");
-    }
+    ensureStylesheet(REALISTIC_STYLE);
 
     appendScript(
       HUMAN_BEHAVIOR_ENTRY,

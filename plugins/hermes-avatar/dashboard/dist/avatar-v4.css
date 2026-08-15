@@ -1,7 +1,7 @@
 @import url("/dashboard-plugins/hermes-avatar/dist/realistic.css");
 
-/* v0.4 avatar-management controls live in the page header. Keep their
-   responsive behavior scoped away from the chat composer's action row. */
+/* v0.7 keeps mobile presentation concerns isolated in this skin layer.
+   Runtime behavior, avatar rendering, speech and chat logic stay untouched. */
 .dh2-header > .dh2-composer__actions {
   margin-top: 0;
   flex-wrap: wrap;
@@ -14,9 +14,6 @@
   cursor: not-allowed;
 }
 
-/* Explicit voice-call affordance. The underlying microphone behavior stays
-   isolated in the Digital Human runtime; this layer only makes the action
-   obvious and touch-friendly. */
 .dh2-composer__actions .dh2-call {
   min-width: 7.25rem;
   padding-inline: .85rem;
@@ -40,79 +37,343 @@
 }
 
 @media (max-width: 680px) {
+  .dh2-page {
+    --dh2-mobile-gap: .72rem;
+    min-height: 100svh;
+    padding: .55rem .55rem calc(.8rem + env(safe-area-inset-bottom));
+    overflow-x: clip;
+  }
+
+  .dh2-page::before {
+    background:
+      radial-gradient(circle at 50% -8%, rgba(78, 205, 255, .15), transparent 22rem),
+      radial-gradient(circle at 92% 28%, rgba(133, 103, 255, .10), transparent 24rem),
+      linear-gradient(180deg, rgba(2, 10, 17, .05), rgba(2, 10, 17, .34));
+  }
+
   .dh2-header {
+    margin: 0 0 .72rem;
+    padding: .82rem .85rem;
     flex-direction: column;
     align-items: stretch;
-    gap: .65rem;
+    gap: .72rem;
+    border: 1px solid rgba(102, 231, 255, .12);
+    border-radius: 1.15rem;
+    background: linear-gradient(145deg, rgba(10, 31, 44, .82), rgba(4, 15, 24, .90));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.035), 0 16px 40px rgba(0,0,0,.16);
+    backdrop-filter: blur(18px);
+  }
+
+  .dh2-header h1 {
+    margin: .18rem 0 .25rem;
+    font-size: clamp(1.65rem, 8.8vw, 2.2rem);
+    line-height: 1.02;
+    letter-spacing: -.055em;
+  }
+
+  .dh2-header p {
+    max-width: 32rem;
+    font-size: .76rem;
+    line-height: 1.48;
   }
 
   .dh2-header > .dh2-composer__actions {
     width: 100%;
     max-width: none;
-    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .42rem;
+    justify-content: stretch;
   }
 
   .dh2-header > .dh2-composer__actions .dh2-new {
-    flex: 1 1 7.25rem;
+    width: 100%;
     min-width: 0;
+    min-height: 2.48rem;
+    padding: .64rem .58rem;
+    font-size: .55rem;
+    border-radius: .78rem;
+    background: rgba(8, 27, 38, .78);
   }
 
-  .dh2-composer__actions .dh2-call {
-    min-width: 8.5rem;
-    min-height: 2.7rem;
-    flex: 1 1 8.5rem;
+  .dh2-features {
+    margin: 0 0 .72rem;
+    padding: 0 .05rem .08rem;
+    flex-wrap: nowrap;
+    gap: .4rem;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
   }
 
-  /* Mobile Digital Human framing.
-     The GLB camera recalculates its fit from the canvas aspect ratio. A narrow,
-     centered portrait viewport gives full-body models enough vertical room and
-     prevents the head/shoulders from being clipped on phone screens. */
+  .dh2-features::-webkit-scrollbar { display: none; }
+
+  .dh2-features span {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    padding: .42rem .62rem;
+    font-size: .5rem;
+    background: rgba(7, 23, 34, .72);
+    border-color: rgba(102, 231, 255, .14);
+    backdrop-filter: blur(12px);
+  }
+
+  .dh2-workspace {
+    display: flex;
+    flex-direction: column;
+    gap: var(--dh2-mobile-gap);
+  }
+
+  .dh2-stage,
+  .dh2-chat {
+    border-radius: 1.18rem;
+    border-color: rgba(102, 231, 255, .14);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.035), 0 18px 46px rgba(0,0,0,.20);
+  }
+
   .dh2-stage {
-    min-height: clamp(34rem, 72svh, 40rem);
+    min-height: clamp(32rem, 68svh, 37rem);
+    background:
+      radial-gradient(circle at 50% 40%, rgba(88, 181, 213, .14), transparent 18rem),
+      linear-gradient(155deg, rgba(10, 31, 43, .94), rgba(3, 12, 20, .98));
+  }
+
+  .dh2-stage__aurora {
+    inset: 10% 6% 9%;
+    filter: blur(24px);
+    opacity: .86;
   }
 
   .dh2-stage__canvas {
     left: 50%;
     right: auto;
-    top: 3.45rem;
-    bottom: 2.75rem;
-    width: min(58%, 15.5rem);
-    height: calc(100% - 6.2rem);
+    top: 3.8rem;
+    bottom: 3.05rem;
+    width: min(64%, 16.5rem);
+    height: calc(100% - 6.85rem);
     transform: translateX(-50%);
     transform-origin: center center;
   }
 
-  /* Keep the conversation useful on mobile without forcing a second
-     desktop-sized viewport of empty transcript before the composer. */
-  .dh2-chat {
-    min-height: 0;
+  .dh2-stage__top {
+    top: .68rem;
+    left: .68rem;
+    right: .68rem;
+    gap: .5rem;
   }
 
+  .dh2-status {
+    min-height: 2rem;
+    padding: .46rem .62rem;
+    font-size: .55rem;
+    background: rgba(5, 18, 27, .82);
+    backdrop-filter: blur(12px);
+  }
+
+  .dh2-mode {
+    padding: .18rem;
+    border-radius: .72rem;
+    backdrop-filter: blur(12px);
+  }
+
+  .dh2-mode button {
+    min-height: 1.82rem;
+    padding: .42rem .48rem;
+    font-size: .51rem;
+  }
+
+  .dh2-stage__caption {
+    left: .78rem;
+    right: .78rem;
+    bottom: .72rem;
+    padding: .6rem .7rem;
+    border: 1px solid rgba(102, 231, 255, .10);
+    border-radius: .84rem;
+    background: linear-gradient(135deg, rgba(4, 17, 25, .70), rgba(4, 17, 25, .42));
+    backdrop-filter: blur(14px);
+  }
+
+  .dh2-stage__caption strong { font-size: .82rem; }
+  .dh2-stage__caption small { font-size: .59rem; line-height: 1.35; }
+  .dh2-stage__caption .dh2-kicker { font-size: .49rem; }
+
+  .dh2-chat {
+    min-height: 0;
+    overflow: visible;
+    background: linear-gradient(155deg, rgba(8, 27, 39, .92), rgba(3, 12, 20, .97));
+  }
+
+  .dh2-chat__header {
+    position: sticky;
+    top: .35rem;
+    z-index: 9;
+    padding: .78rem .82rem;
+    border-radius: 1.15rem 1.15rem 0 0;
+    background: rgba(6, 21, 31, .82);
+    backdrop-filter: blur(18px);
+  }
+
+  .dh2-chat__header strong { font-size: .84rem; }
+  .dh2-chat__header .dh2-kicker { font-size: .49rem; }
+
   .dh2-transcript {
-    min-height: 12rem;
-    max-height: min(46svh, 28rem);
+    min-height: 10rem;
+    max-height: min(40svh, 24rem);
+    padding: .72rem .68rem;
+    gap: .55rem;
+    scroll-padding-bottom: 7rem;
   }
 
   .dh2-empty {
-    margin: clamp(1.5rem, 8svh, 4rem) auto;
-    padding-inline: .75rem;
+    margin: 1.55rem auto;
+    padding: .6rem 1rem 1rem;
+    max-width: 18rem;
+    gap: .5rem;
+  }
+
+  .dh2-empty__orb {
+    width: 2.8rem;
+    height: 2.8rem;
+  }
+
+  .dh2-empty strong { font-size: .88rem; }
+  .dh2-empty span { font-size: .72rem; line-height: 1.48; }
+
+  .dh2-message {
+    max-width: 92%;
+    padding: .68rem .72rem;
+    border-radius: .9rem;
+    box-shadow: 0 8px 20px rgba(0,0,0,.08);
+  }
+
+  .dh2-message__text {
+    font-size: .80rem;
+    line-height: 1.52;
+  }
+
+  .dh2-message__meta { font-size: .49rem; }
+
+  .dh2-error {
+    margin: 0 .62rem .55rem;
+    border-radius: .78rem;
+  }
+
+  .dh2-composer {
+    position: sticky;
+    bottom: max(.35rem, env(safe-area-inset-bottom));
+    z-index: 12;
+    margin: .05rem .48rem .48rem;
+    padding: .62rem;
+    border: 1px solid rgba(102, 231, 255, .14);
+    border-radius: 1rem;
+    background: rgba(4, 16, 24, .88);
+    box-shadow: 0 -10px 34px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.03);
+    backdrop-filter: blur(20px);
+  }
+
+  .dh2-composer textarea {
+    min-height: 3.55rem;
+    padding: .7rem .72rem;
+    border-radius: .78rem;
+    font-size: .84rem;
+    background: rgba(2, 12, 19, .78);
+  }
+
+  .dh2-composer__actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) auto auto minmax(4.8rem, .85fr);
+    gap: .32rem;
+    margin-top: .42rem;
+    align-items: stretch;
+  }
+
+  .dh2-composer__actions .dh2-call {
+    min-width: 0;
+    min-height: 2.55rem;
+    width: 100%;
+    padding: .58rem .62rem;
+    border-radius: .76rem;
+    font-size: .55rem;
+    letter-spacing: .055em;
+  }
+
+  .dh2-icon,
+  .dh2-stop,
+  .dh2-send {
+    min-width: 2.6rem;
+    min-height: 2.55rem;
+    padding: .56rem .58rem;
+    border-radius: .76rem;
+    font-size: .53rem;
+  }
+
+  .dh2-send {
+    margin-left: 0;
+    width: 100%;
+    min-width: 4.8rem;
+  }
+
+  .dh2-footer {
+    margin: .72rem .1rem 0;
+    padding: .72rem .15rem .25rem;
+    gap: .42rem .72rem;
+    font-size: .51rem;
+    line-height: 1.45;
+    opacity: .72;
   }
 }
 
 @media (max-width: 390px) {
-  .dh2-header > .dh2-composer__actions .dh2-new {
-    flex-basis: 100%;
+  .dh2-page { padding-inline: .42rem; }
+
+  .dh2-header {
+    padding: .72rem;
+    border-radius: 1rem;
+  }
+
+  .dh2-header > .dh2-composer__actions {
+    grid-template-columns: 1fr;
   }
 
   .dh2-stage {
-    min-height: clamp(32rem, 70svh, 37rem);
+    min-height: clamp(30rem, 66svh, 34rem);
   }
 
   .dh2-stage__canvas {
-    width: min(55%, 13rem);
+    width: min(60%, 13.7rem);
   }
 
   .dh2-transcript {
-    min-height: 10.5rem;
+    min-height: 9rem;
+    max-height: 37svh;
+  }
+
+  .dh2-composer__actions {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .dh2-send {
+    grid-column: 1 / -1;
+    min-height: 2.65rem;
+  }
+}
+
+@media (max-width: 340px) {
+  .dh2-stage__top {
+    align-items: flex-start;
+  }
+
+  .dh2-mode {
+    flex-direction: column;
+  }
+
+  .dh2-composer__actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .dh2-composer__actions .dh2-call,
+  .dh2-send {
+    grid-column: 1 / -1;
   }
 }

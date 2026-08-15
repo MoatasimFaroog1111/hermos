@@ -4,6 +4,7 @@
   const AVATAR_ENTRY = "/dashboard-plugins/hermes-avatar/dist/avatar-v4.js";
   const PATCH_FLAG = "__HERMES_FEMALE_VOICE_PATCHED__";
   const CALL_UX_FLAG = "__HERMES_VOICE_CALL_UX__";
+  const CALL_AUTO_REPLY_FLAG = "__HERMES_VOICE_CALL_AUTO_REPLY__";
 
   function normalize(value) {
     return String(value || "").trim().toLowerCase();
@@ -82,18 +83,68 @@
     };
   }
 
-  function refreshVoiceCallButton() {
+  function getComposerControls() {
     const composer = document.querySelector(".dh2-chat .dh2-composer__actions");
-    const button = composer?.querySelector(".dh2-icon:first-child");
-    if (!button) return;
+    if (!composer) return { composer: null, callButton: null, voiceButton: null };
+    const iconButtons = Array.from(composer.querySelectorAll(".dh2-icon"));
+    return {
+      composer,
+      callButton: iconButtons[0] || null,
+      voiceButton: iconButtons[1] || null,
+    };
+  }
 
-    const live = button.classList.contains("is-live");
-    button.classList.add("dh2-call");
-    button.setAttribute("aria-label", live ? "End voice call" : "Start voice call");
-    button.setAttribute("title", live ? "End voice call" : "Start voice call");
+  function refreshVoiceCallButton() {
+    const { callButton } = getComposerControls();
+    if (!callButton) return;
+
+    const live = callButton.classList.contains("is-live");
+    callButton.classList.add("dh2-call");
+    callButton.setAttribute("aria-label", live ? "End voice call" : "Start voice call with automatic spoken reply");
+    callButton.setAttribute("title", live ? "End voice call" : "Start voice call — Hermes replies by voice automatically");
 
     const label = live ? "END CALL" : "VOICE CALL";
-    if (button.textContent !== label) button.textContent = label;
+    if (callButton.textContent !== label) callButton.textContent = label;
+  }
+
+  function voiceOutputIsMuted(voiceButton) {
+    if (!voiceButton) return false;
+    return normalize(voiceButton.textContent) === "mute"
+      || voiceButton.getAttribute("aria-pressed") === "false";
+  }
+
+  function installAutomaticVoiceReplyForCalls() {
+    if (window[CALL_AUTO_REPLY_FLAG]) return;
+    window[CALL_AUTO_REPLY_FLAG] = true;
+
+    document.addEventListener("click", event => {
+      const { callButton, voiceButton } = getComposerControls();
+      if (!callButton || event.target !== callButton) return;
+      if (callButton.dataset.hermesVoiceReplay === "1") {
+        delete callButton.dataset.hermesVoiceReplay;
+        return;
+      }
+
+      // Ending an active listening session should happen immediately.
+      if (callButton.classList.contains("is-live")) return;
+
+      // A voice call is a voice-first interaction. If the user previously muted
+      // TTS, enable it first and replay the call click after React has committed
+      // the new state. This guarantees the response to this recorded message is
+      // spoken automatically instead of silently falling back to text.
+      if (voiceOutputIsMuted(voiceButton)) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        voiceButton.click();
+        window.setTimeout(() => {
+          const latest = getComposerControls().callButton;
+          if (!latest || latest.disabled) return;
+          latest.dataset.hermesVoiceReplay = "1";
+          latest.click();
+        }, 0);
+      }
+    }, true);
   }
 
   function installVoiceCallUX() {
@@ -122,6 +173,7 @@
 
   installFemaleVoicePatch();
   installVoiceCallUX();
+  installAutomaticVoiceReplyForCalls();
 
   if ("speechSynthesis" in window) {
     window.speechSynthesis.getVoices();

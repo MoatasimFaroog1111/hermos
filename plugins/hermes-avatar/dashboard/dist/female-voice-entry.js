@@ -3,6 +3,7 @@
 
   const AVATAR_ENTRY = "/dashboard-plugins/hermes-avatar/dist/avatar-v4.js";
   const PATCH_FLAG = "__HERMES_FEMALE_VOICE_PATCHED__";
+  const CALL_UX_FLAG = "__HERMES_VOICE_CALL_UX__";
 
   function normalize(value) {
     return String(value || "").trim().toLowerCase();
@@ -24,18 +25,14 @@
     else if (!arabic && /english/.test(name)) score += 45;
     else score -= 120;
 
-    // Prefer modern/high-quality system voices when the platform exposes them.
     if (/natural|neural|online|premium|enhanced|studio|wavenet/.test(name)) score += 55;
     if (/google|microsoft|apple/.test(name)) score += 22;
     if (voice.localService === false) score += 8;
 
-    // Female voice names commonly exposed by Android, Chrome, Edge, Windows,
-    // macOS and iOS. Arabic names are included where browsers expose them.
     if (/female|woman|zira|samantha|victoria|karen|moira|tessa|ava|aria|jenny|emma|sara|sarah|layla|leila|laila|salma|amira|noura|noora|maryam|mariam|hoda|huda|zeina|zaina|جنى|ليلى|سلمى|أميرة|اميرة|نورة|مريم/.test(name)) {
       score += 75;
     }
 
-    // Explicitly de-prioritize common masculine names when alternatives exist.
     if (/male|man|david|mark|daniel|george|james|hamed|majed|tarik|tariq|omar|ahmed|mohamed|محمد|حامد|ماجد|عمر|طارق/.test(name)) {
       score -= 85;
     }
@@ -75,7 +72,6 @@
           utterance.lang = arabic ? "ar-SA" : "en-US";
         }
 
-        // Slightly warm, natural feminine presentation without sounding synthetic.
         utterance.rate = arabic ? 0.94 : 0.97;
         utterance.pitch = 1.04;
         utterance.volume = 1;
@@ -86,19 +82,47 @@
     };
   }
 
+  function refreshVoiceCallButton() {
+    const composer = document.querySelector(".dh2-chat .dh2-composer__actions");
+    const button = composer?.querySelector(".dh2-icon:first-child");
+    if (!button) return;
+
+    const live = button.classList.contains("is-live");
+    button.classList.add("dh2-call");
+    button.setAttribute("aria-label", live ? "End voice call" : "Start voice call");
+    button.setAttribute("title", live ? "End voice call" : "Start voice call");
+
+    const label = live ? "END CALL" : "VOICE CALL";
+    if (button.textContent !== label) button.textContent = label;
+  }
+
+  function installVoiceCallUX() {
+    if (window[CALL_UX_FLAG]) return;
+    window[CALL_UX_FLAG] = true;
+
+    const observer = new MutationObserver(() => refreshVoiceCallButton());
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "disabled"],
+    });
+    refreshVoiceCallButton();
+  }
+
   function loadAvatarEntry() {
     if (document.querySelector(`script[src^="${AVATAR_ENTRY}"]`)) return;
     const script = document.createElement("script");
     script.src = AVATAR_ENTRY;
     script.async = true;
+    script.onload = refreshVoiceCallButton;
     script.onerror = () => console.error("[hermes-avatar] unable to load avatar runtime");
     document.body.appendChild(script);
   }
 
   installFemaleVoicePatch();
+  installVoiceCallUX();
 
-  // Some browsers populate the voice list asynchronously. The patch chooses
-  // from the latest list at every utterance, and this listener warms the list.
   if ("speechSynthesis" in window) {
     window.speechSynthesis.getVoices();
     window.speechSynthesis.addEventListener?.("voiceschanged", () => {

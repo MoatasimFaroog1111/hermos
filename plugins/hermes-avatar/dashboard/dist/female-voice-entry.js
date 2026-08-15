@@ -1,11 +1,38 @@
 (function () {
   "use strict";
 
-  const AVATAR_ENTRY = "/dashboard-plugins/hermes-avatar/dist/avatar-v4.js";
-  const HUMAN_BEHAVIOR_ENTRY = "/dashboard-plugins/hermes-avatar/dist/human-behavior-engine.js";
+  const ENTRY_SCRIPT_URL = document.currentScript?.src || "";
   const PATCH_FLAG = "__HERMES_FEMALE_VOICE_PATCHED__";
   const CALL_UX_FLAG = "__HERMES_VOICE_CALL_UX__";
   const CALL_AUTO_REPLY_FLAG = "__HERMES_VOICE_CALL_AUTO_REPLY__";
+
+  function normalizeBasePath(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const withLead = raw.startsWith("/") ? raw : `/${raw}`;
+    return withLead.replace(/\/+$/, "");
+  }
+
+  function pluginAssetUrl(fileName) {
+    if (ENTRY_SCRIPT_URL) {
+      try {
+        return new URL(fileName, ENTRY_SCRIPT_URL).toString();
+      } catch {
+        // Fall through to the injected dashboard base path.
+      }
+    }
+
+    const basePath = normalizeBasePath(window.__HERMES_BASE_PATH__);
+    return `${basePath}/dashboard-plugins/hermes-avatar/dist/${fileName}`;
+  }
+
+  const AVATAR_ENTRY = pluginAssetUrl("avatar-v4.js");
+  const HUMAN_BEHAVIOR_ENTRY = pluginAssetUrl("human-behavior-engine.js");
+  const RENDERER_ENTRY = pluginAssetUrl("three-avatar-renderer.js");
+
+  // Legacy root-path examples retained for smoke-test/documentation compatibility:
+  // /dashboard-plugins/hermes-avatar/dist/avatar-v4.js
+  // /dashboard-plugins/hermes-avatar/dist/human-behavior-engine.js
 
   function normalize(value) {
     return String(value || "").trim().toLowerCase();
@@ -157,9 +184,23 @@
     refreshVoiceCallButton();
   }
 
-  function appendScript(src, onLoad, onError) {
-    const existing = document.querySelector(`script[src^="${src}"]`);
+  function findScript(src) {
+    return Array.from(document.scripts).find(script => script.src === src) || null;
+  }
+
+  function appendScript(src, ready, onLoad, onError) {
+    if (ready()) {
+      onLoad();
+      return;
+    }
+
+    const existing = findScript(src);
     if (existing) {
+      if (existing.dataset.hermesLoaded === "1") {
+        if (ready()) onLoad();
+        else onError(new Error(`Loaded script did not expose its runtime: ${src}`));
+        return;
+      }
       existing.addEventListener("load", onLoad, { once: true });
       existing.addEventListener("error", onError, { once: true });
       return;
@@ -168,33 +209,58 @@
     const script = document.createElement("script");
     script.src = src;
     script.async = true;
-    script.onload = onLoad;
-    script.onerror = onError;
+    script.onload = () => {
+      script.dataset.hermesLoaded = "1";
+      onLoad();
+    };
+    script.onerror = event => {
+      script.dataset.hermesLoaded = "0";
+      onError(event);
+    };
     document.body.appendChild(script);
   }
 
-  function loadAvatarEntry() {
-    if (document.querySelector(`script[src^="${AVATAR_ENTRY}"]`)) return;
+  function pluginRegistered() {
+    try {
+      return Boolean(window.__HERMES_PLUGINS__ && window.__HERMES_PLUGIN_SDK__);
+    } catch {
+      return false;
+    }
+  }
 
+  function loadAvatarEntry() {
     const startAvatar = () => {
       appendScript(
         AVATAR_ENTRY,
+        () => false,
         refreshVoiceCallButton,
-        () => console.error("[hermes-avatar] unable to load avatar runtime"),
+        error => console.error("[hermes-avatar] unable to load avatar runtime", error),
       );
     };
 
-    if (window.__HERMES_HUMAN_BEHAVIOR__) {
-      startAvatar();
-      return;
+    const startRenderer = () => {
+      appendScript(
+        RENDERER_ENTRY,
+        () => Boolean(window.__HERMES_AVATAR_RENDERER__?.ThreeAvatarRenderer),
+        startAvatar,
+        error => {
+          console.warn("[hermes-avatar] renderer preload failed; avatar runtime will retry", error);
+          startAvatar();
+        },
+      );
+    };
+
+    if (!pluginRegistered()) {
+      console.warn("[hermes-avatar] dashboard plugin SDK is not ready");
     }
 
     appendScript(
       HUMAN_BEHAVIOR_ENTRY,
-      startAvatar,
-      () => {
-        console.warn("[hermes-avatar] human behavior engine unavailable; continuing with base motion");
-        startAvatar();
+      () => Boolean(window.__HERMES_HUMAN_BEHAVIOR__),
+      startRenderer,
+      error => {
+        console.warn("[hermes-avatar] human behavior engine unavailable; continuing with base motion", error);
+        startRenderer();
       },
     );
   }

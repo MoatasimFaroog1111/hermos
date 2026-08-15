@@ -1,9 +1,9 @@
 {
   "name": "hermes-avatar",
   "label": "Digital Human",
-  "description": "Interactive 3D Digital Human for Hermes with GLB avatars, humanoid rig motion, pointer/touch gaze, speech gestures, visemes, realistic female browser voice and hologram mode.",
+  "description": "Interactive 3D Digital Human for Hermes with GLB avatars, humanoid rig motion, pointer/touch gaze, speech gestures, visemes, realistic female browser voice, voice-call UX and polished mobile layout.",
   "icon": "Sparkles",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "tab": { "path": "/digital-human", "position": "after:chat" },
   "entry": "dist/female-voice-entry.js",
   "css": "dist/avatar-v4.css",

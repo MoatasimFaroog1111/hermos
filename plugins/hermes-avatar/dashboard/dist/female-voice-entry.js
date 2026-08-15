@@ -2,6 +2,7 @@
   "use strict";
 
   const AVATAR_ENTRY = "/dashboard-plugins/hermes-avatar/dist/avatar-v4.js";
+  const HUMAN_BEHAVIOR_ENTRY = "/dashboard-plugins/hermes-avatar/dist/human-behavior-engine.js";
   const PATCH_FLAG = "__HERMES_FEMALE_VOICE_PATCHED__";
   const CALL_UX_FLAG = "__HERMES_VOICE_CALL_UX__";
   const CALL_AUTO_REPLY_FLAG = "__HERMES_VOICE_CALL_AUTO_REPLY__";
@@ -125,13 +126,8 @@
         return;
       }
 
-      // Ending an active listening session should happen immediately.
       if (callButton.classList.contains("is-live")) return;
 
-      // A voice call is a voice-first interaction. If the user previously muted
-      // TTS, enable it first and replay the call click after React has committed
-      // the new state. This guarantees the response to this recorded message is
-      // spoken automatically instead of silently falling back to text.
       if (voiceOutputIsMuted(voiceButton)) {
         event.preventDefault();
         event.stopPropagation();
@@ -161,14 +157,46 @@
     refreshVoiceCallButton();
   }
 
+  function appendScript(src, onLoad, onError) {
+    const existing = document.querySelector(`script[src^="${src}"]`);
+    if (existing) {
+      existing.addEventListener("load", onLoad, { once: true });
+      existing.addEventListener("error", onError, { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.onload = onLoad;
+    script.onerror = onError;
+    document.body.appendChild(script);
+  }
+
   function loadAvatarEntry() {
     if (document.querySelector(`script[src^="${AVATAR_ENTRY}"]`)) return;
-    const script = document.createElement("script");
-    script.src = AVATAR_ENTRY;
-    script.async = true;
-    script.onload = refreshVoiceCallButton;
-    script.onerror = () => console.error("[hermes-avatar] unable to load avatar runtime");
-    document.body.appendChild(script);
+
+    const startAvatar = () => {
+      appendScript(
+        AVATAR_ENTRY,
+        refreshVoiceCallButton,
+        () => console.error("[hermes-avatar] unable to load avatar runtime"),
+      );
+    };
+
+    if (window.__HERMES_HUMAN_BEHAVIOR__) {
+      startAvatar();
+      return;
+    }
+
+    appendScript(
+      HUMAN_BEHAVIOR_ENTRY,
+      startAvatar,
+      () => {
+        console.warn("[hermes-avatar] human behavior engine unavailable; continuing with base motion");
+        startAvatar();
+      },
+    );
   }
 
   installFemaleVoicePatch();

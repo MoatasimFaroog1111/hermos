@@ -17,7 +17,8 @@ def test_manifest_routes_through_deterministic_entry():
     manifest = json.loads(_MANIFEST.read_text(encoding="utf-8"))
 
     assert manifest["entry"] == "dist/digital-human-entry.js"
-    assert manifest["version"] == "0.8.0"
+    assert manifest["api"] == "plugin_api_entry.py"
+    assert manifest["version"] == "0.8.1"
 
 
 def test_wrapper_registers_synchronously_before_async_loading():

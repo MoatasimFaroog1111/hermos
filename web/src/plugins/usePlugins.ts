@@ -17,15 +17,24 @@ import {
   setPluginLoadError,
 } from "./registry";
 
+// Bump only when the dashboard plugin-loading contract changes in a way that
+// must invalidate already-cached production plugin assets even when the plugin
+// semantic version itself intentionally stays stable.
+const PLUGIN_ASSET_CACHE_EPOCH = "20260816.3";
+
 function versionedPluginAssetUrl(
   manifest: PluginManifest,
   relativePath: string,
 ): string {
   const baseUrl = `${HERMES_BASE_PATH}/dashboard-plugins/${manifest.name}/${relativePath}`;
+  const params = new URLSearchParams();
   const version = String(manifest.version || "").trim();
-  if (!version) return baseUrl;
+  if (version) params.set("hermes_plugin_v", version);
+  params.set("hermes_asset_epoch", PLUGIN_ASSET_CACHE_EPOCH);
+  const query = params.toString();
+  if (!query) return baseUrl;
   const separator = baseUrl.includes("?") ? "&" : "?";
-  return `${baseUrl}${separator}hermes_plugin_v=${encodeURIComponent(version)}`;
+  return `${baseUrl}${separator}${query}`;
 }
 
 export function usePlugins() {
@@ -52,10 +61,9 @@ export function usePlugins() {
     const injectedScripts: HTMLScriptElement[] = [];
 
     for (const manifest of manifests) {
-      // Version plugin assets by manifest version. Railway/CDN/browser caches
-      // may otherwise keep an older entry bundle while the API already serves
-      // a newer manifest, leaving a visible sidebar tab backed by stale JS.
-      // A version bump now forms an atomic cache boundary for JS + CSS.
+      // Version plugin assets by semantic version plus a dashboard loader epoch.
+      // Railway/CDN/browser caches may otherwise keep an older entry bundle
+      // while the API already serves a newer manifest or host loader contract.
       if (manifest.css) {
         const cssUrl = versionedPluginAssetUrl(manifest, manifest.css);
         if (!document.querySelector(`link[href="${cssUrl}"]`)) {
@@ -80,6 +88,7 @@ export function usePlugins() {
       const script = document.createElement("script");
       script.setAttribute("data-hermes-plugin", manifest.name);
       script.setAttribute("data-hermes-plugin-version", String(manifest.version || ""));
+      script.setAttribute("data-hermes-asset-epoch", PLUGIN_ASSET_CACHE_EPOCH);
       script.src = scriptSrc;
       script.async = true;
       // SRI integrity verification — defense against compromised plugin
@@ -95,7 +104,7 @@ export function usePlugins() {
       script.onerror = () => {
         setPluginLoadError(manifest.name, "LOAD_FAILED");
         console.warn(
-          `[plugins] Failed to load ${manifest.name} v${manifest.version || "unknown"} from ${scriptSrc} (open Network tab)`,
+          `[plugins] Failed to load ${manifest.name} v${manifest.version || "unknown"} epoch ${PLUGIN_ASSET_CACHE_EPOCH} from ${scriptSrc} (open Network tab)`,
         );
       };
       script.onload = () => {

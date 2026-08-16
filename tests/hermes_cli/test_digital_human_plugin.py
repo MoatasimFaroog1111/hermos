@@ -65,15 +65,17 @@ def test_manifest_points_to_v4_runtime_assets():
     manifest = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
 
     assert manifest["name"] == "hermes-avatar"
-    assert manifest["version"] == "0.7.0"
+    assert manifest["version"] == "0.8.0"
     assert manifest["tab"]["path"] == "/digital-human"
-    assert manifest["entry"] == "dist/female-voice-entry.js"
+    assert manifest["entry"] == "dist/digital-human-entry.js"
     assert manifest["css"] == "dist/avatar-v4.css"
     assert manifest["api"] == "plugin_api.py"
 
     for relative_path in (manifest["entry"], manifest["css"], manifest["api"]):
         assert (_PLUGIN_DIR / relative_path).is_file(), relative_path
 
+    assert (_PLUGIN_DIR / "dist" / "female-voice-entry.js").is_file()
+    assert (_PLUGIN_DIR / "dist" / "deterministic-avatar-policy.js").is_file()
     assert (_PLUGIN_DIR / "dist" / "avatar-v4.js").is_file()
     assert (_PLUGIN_DIR / "dist" / "realistic.css").is_file()
     assert (_PLUGIN_DIR / "dist" / "three-avatar-renderer.js").is_file()

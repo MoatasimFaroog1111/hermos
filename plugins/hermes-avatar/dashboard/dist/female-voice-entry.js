@@ -6,8 +6,10 @@
   const CALL_UX_FLAG = "__HERMES_VOICE_CALL_UX__";
   const CALL_AUTO_REPLY_FLAG = "__HERMES_VOICE_CALL_AUTO_REPLY__";
   const AVATAR_READY_FLAG = "__HERMES_AVATAR_ENTRY_LOADED__";
+  const SCRIPT_TIMEOUT_MS = 15000;
   const SDK = window.__HERMES_PLUGIN_SDK__;
   const REGISTRY = window.__HERMES_PLUGINS__;
+  let runtimeFailure = null;
 
   if (!SDK || !REGISTRY) {
     console.error("[hermes-avatar] Hermes plugin SDK/registry is unavailable.");
@@ -37,6 +39,53 @@
         ),
       ),
     );
+  }
+
+  function DigitalHumanLoadErrorPage() {
+    const failure = runtimeFailure || {};
+    return h(
+      "main",
+      {
+        className: "dh2-page",
+        role: "alert",
+        "aria-live": "assertive",
+        "aria-busy": "false",
+      },
+      h(
+        "header",
+        { className: "dh2-header" },
+        h(
+          "div",
+          null,
+          h("div", { className: "dh2-kicker" }, "HERMES // DIGITAL HUMAN"),
+          h("h1", null, "Digital Human"),
+          h("p", null, "The interactive avatar runtime could not be started."),
+          h(
+            "p",
+            { className: "dh2-error", "data-runtime-stage": failure.stage || "runtime" },
+            `${failure.stage || "Runtime"}: ${failure.message || "Unknown loading error"}`,
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              className: "dh2-button",
+              onClick: () => window.location.reload(),
+            },
+            "RETRY DIGITAL HUMAN",
+          ),
+        ),
+      ),
+    );
+  }
+
+  function showRuntimeLoadError(stage, error) {
+    runtimeFailure = {
+      stage,
+      message: error instanceof Error ? error.message : String(error || "Load failed"),
+    };
+    console.error(`[hermes-avatar] ${stage} failed`, error);
+    REGISTRY.register("hermes-avatar", DigitalHumanLoadErrorPage);
   }
 
   // The dashboard validates plugin registration in the first microtask after
@@ -238,21 +287,43 @@
     return Array.from(document.scripts).find(script => script.src === src) || null;
   }
 
-  function appendScript(src, ready, onLoad, onError) {
+  function appendScript(src, ready, onLoad, onError, timeoutMs = SCRIPT_TIMEOUT_MS) {
     if (ready()) {
       onLoad();
       return;
     }
 
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      onError(new Error(`Timed out loading ${src} after ${timeoutMs} ms`));
+    }, timeoutMs);
+
+    const loaded = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      onLoad();
+    };
+    const failed = error => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      onError(error instanceof Error ? error : new Error(`Unable to load ${src}`));
+    };
+
     const existing = findScript(src);
     if (existing) {
       if (existing.dataset.hermesLoaded === "1") {
+        window.clearTimeout(timer);
+        settled = true;
         if (ready()) onLoad();
         else onError(new Error(`Loaded script did not expose its runtime: ${src}`));
         return;
       }
-      existing.addEventListener("load", onLoad, { once: true });
-      existing.addEventListener("error", onError, { once: true });
+      existing.addEventListener("load", loaded, { once: true });
+      existing.addEventListener("error", failed, { once: true });
       return;
     }
 
@@ -261,11 +332,11 @@
     script.async = true;
     script.onload = () => {
       script.dataset.hermesLoaded = "1";
-      onLoad();
+      loaded();
     };
     script.onerror = event => {
       script.dataset.hermesLoaded = "0";
-      onError(event);
+      failed(event);
     };
     document.body.appendChild(script);
   }
@@ -279,7 +350,7 @@
           window[AVATAR_READY_FLAG] = true;
           refreshVoiceCallButton();
         },
-        error => console.error("[hermes-avatar] unable to load avatar runtime", error),
+        error => showRuntimeLoadError("Avatar runtime", error),
       );
     };
 

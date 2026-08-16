@@ -40,14 +40,50 @@
   // page after the policy layer has been installed.
   REGISTRY.register("hermes-avatar", DigitalHumanBootstrapPage);
 
+  function isDigitalHumanPath(pathname) {
+    return String(pathname || "").replace(/\/+$/, "").endsWith("/digital-human");
+  }
+
+  function installNavigationFallback() {
+    // React Router owns normal navigation. This watchdog is intentionally
+    // passive: it only performs a same-origin hard navigation when a click on
+    // the Digital Human sidebar link failed to change the browser path. That
+    // makes the plugin recover from stale/mismatched SPA route tables without
+    // interfering with healthy client-side navigation.
+    document.addEventListener("click", event => {
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const element = event.target instanceof Element ? event.target : null;
+      const anchor = element?.closest?.("a[href]");
+      if (!anchor) return;
+
+      let targetUrl;
+      try {
+        targetUrl = new URL(anchor.href, window.location.href);
+      } catch {
+        return;
+      }
+      if (targetUrl.origin !== window.location.origin) return;
+      if (!isDigitalHumanPath(targetUrl.pathname)) return;
+
+      window.setTimeout(() => {
+        if (!isDigitalHumanPath(window.location.pathname)) {
+          console.warn("[hermes-avatar] SPA navigation did not open Digital Human; using same-origin fallback navigation.");
+          window.location.assign(targetUrl.toString());
+        }
+      }, 250);
+    });
+  }
+
+  installNavigationFallback();
+
   function assetUrl(fileName) {
     if (ENTRY_SCRIPT_URL) {
       try {
         const entry = new URL(ENTRY_SCRIPT_URL, window.location.href);
         const resolved = new URL(fileName, entry);
-        // Keep the host-provided manifest-version cache key on every nested
-        // runtime asset. Without this, the entry can be fresh while policy,
-        // voice or avatar dependencies remain stale in the browser/CDN cache.
+        // Keep the host-provided manifest-version/cache-epoch query on every
+        // nested runtime asset so the entry and its dependencies are atomic.
         if (entry.search) resolved.search = entry.search;
         return resolved.toString();
       } catch {

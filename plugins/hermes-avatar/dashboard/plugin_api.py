@@ -8,8 +8,10 @@ tool-disabled in-process Hermes turn when the API server is not running.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import os
+import sys
 import tempfile
 import threading
 import urllib.error
@@ -18,7 +20,7 @@ import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import AsyncIterable, Deque
+from typing import AsyncIterable, Deque, Protocol
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -33,6 +35,34 @@ _MAX_TURNS = 10
 _MAX_AVATAR_BYTES = 25 * 1024 * 1024
 _GLB_MAGIC = b"glTF"
 _DIRECT_AGENT_LOCK = threading.Lock()
+
+
+class CharacterProvider(Protocol):
+    """Narrow provider contract consumed by the Digital Human API layer."""
+
+    name: str
+
+    def configured(self) -> bool: ...
+
+    def health(self) -> dict[str, object]: ...
+
+
+def _load_tripo_provider_class():
+    """Load the sibling provider without relying on process working directory."""
+    module_name = "hermes_avatar_tripo_provider"
+    module = sys.modules.get(module_name)
+    if module is None:
+        module_path = Path(__file__).with_name("tripo_provider.py")
+        spec = importlib.util.spec_from_file_location(module_name, module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Unable to load Tripo character provider")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+    return module.TripoCharacterProvider
+
+
+TripoCharacterProvider = _load_tripo_provider_class()
 
 
 class ChatRequest(BaseModel):
@@ -168,6 +198,7 @@ class AvatarModelStorage:
 
 _CONVERSATIONS: dict[str, ConversationMemory] = {}
 _AVATAR_STORAGE = AvatarModelStorage()
+_TRIPO_PROVIDER: CharacterProvider = TripoCharacterProvider()
 
 
 def _api_server_url() -> str:
@@ -232,6 +263,13 @@ def _health_payload() -> dict:
         **_avatar_descriptor(),
         "avatar_upload_supported": True,
         "avatar_upload_max_bytes": _MAX_AVATAR_BYTES,
+        "character_providers": {
+            "tripo": {
+                "configured": _TRIPO_PROVIDER.configured(),
+                "health_endpoint": "/api/plugins/hermes-avatar/providers/tripo/health",
+                "credentials": "server-side-only",
+            }
+        },
         "facial_channels": [
             "blink",
             "jaw",
@@ -327,6 +365,18 @@ def _direct_hermes_turn(message: str, conversation_id: str) -> str:
 @router.get("/health")
 async def health():
     return _health_payload()
+
+
+@router.get("/providers/tripo/health")
+async def tripo_provider_health():
+    """Check the configured Tripo credential without creating a generation task."""
+    try:
+        return await asyncio.to_thread(_TRIPO_PROVIDER.health)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Tripo health check failed safely ({type(exc).__name__})",
+        ) from exc
 
 
 @router.put("/avatar-model")

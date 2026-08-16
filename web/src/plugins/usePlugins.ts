@@ -17,6 +17,17 @@ import {
   setPluginLoadError,
 } from "./registry";
 
+function versionedPluginAssetUrl(
+  manifest: PluginManifest,
+  relativePath: string,
+): string {
+  const baseUrl = `${HERMES_BASE_PATH}/dashboard-plugins/${manifest.name}/${relativePath}`;
+  const version = String(manifest.version || "").trim();
+  if (!version) return baseUrl;
+  const separator = baseUrl.includes("?") ? "&" : "?";
+  return `${baseUrl}${separator}hermes_plugin_v=${encodeURIComponent(version)}`;
+}
+
 export function usePlugins() {
   const [manifests, setManifests] = useState<PluginManifest[]>([]);
   const [plugins, setPlugins] = useState<RegisteredPlugin[]>([]);
@@ -41,9 +52,12 @@ export function usePlugins() {
     const injectedScripts: HTMLScriptElement[] = [];
 
     for (const manifest of manifests) {
-      // Inject CSS if specified.
+      // Version plugin assets by manifest version. Railway/CDN/browser caches
+      // may otherwise keep an older entry bundle while the API already serves
+      // a newer manifest, leaving a visible sidebar tab backed by stale JS.
+      // A version bump now forms an atomic cache boundary for JS + CSS.
       if (manifest.css) {
-        const cssUrl = `${HERMES_BASE_PATH}/dashboard-plugins/${manifest.name}/${manifest.css}`;
+        const cssUrl = versionedPluginAssetUrl(manifest, manifest.css);
         if (!document.querySelector(`link[href="${cssUrl}"]`)) {
           const link = document.createElement("link");
           link.rel = "stylesheet";
@@ -52,20 +66,20 @@ export function usePlugins() {
         }
       }
 
-      // Load JS bundle. In dev, cache-bust so Vite HMR can clear the
-      // in-memory registry while the browser would otherwise never
-      // re-execute a previously cached <script> URL.
-      const baseUrl = `${HERMES_BASE_PATH}/dashboard-plugins/${manifest.name}/${manifest.entry}`;
+      const versionedUrl = versionedPluginAssetUrl(manifest, manifest.entry);
+      // In dev, add a second per-load nonce so Vite HMR can clear the
+      // in-memory registry while the browser would otherwise reuse a script.
       const scriptSrc = import.meta.env.DEV
-        ? `${baseUrl}?hermes_dv=${Date.now()}`
-        : baseUrl;
+        ? `${versionedUrl}${versionedUrl.includes("?") ? "&" : "?"}hermes_dv=${Date.now()}`
+        : versionedUrl;
       if (!import.meta.env.DEV) {
-        if (loadedScripts.current.has(baseUrl)) continue;
-        loadedScripts.current.add(baseUrl);
+        if (loadedScripts.current.has(scriptSrc)) continue;
+        loadedScripts.current.add(scriptSrc);
       }
 
       const script = document.createElement("script");
       script.setAttribute("data-hermes-plugin", manifest.name);
+      script.setAttribute("data-hermes-plugin-version", String(manifest.version || ""));
       script.src = scriptSrc;
       script.async = true;
       // SRI integrity verification — defense against compromised plugin
@@ -81,7 +95,7 @@ export function usePlugins() {
       script.onerror = () => {
         setPluginLoadError(manifest.name, "LOAD_FAILED");
         console.warn(
-          `[plugins] Failed to load ${manifest.name} from ${scriptSrc} (open Network tab)`,
+          `[plugins] Failed to load ${manifest.name} v${manifest.version || "unknown"} from ${scriptSrc} (open Network tab)`,
         );
       };
       script.onload = () => {

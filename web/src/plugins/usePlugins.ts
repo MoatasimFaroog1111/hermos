@@ -17,26 +17,6 @@ import {
   setPluginLoadError,
 } from "./registry";
 
-// Bump only when the dashboard plugin-loading contract changes in a way that
-// must invalidate already-cached production plugin assets even when the plugin
-// semantic version itself intentionally stays stable.
-const PLUGIN_ASSET_CACHE_EPOCH = "20260816.3";
-
-function versionedPluginAssetUrl(
-  manifest: PluginManifest,
-  relativePath: string,
-): string {
-  const baseUrl = `${HERMES_BASE_PATH}/dashboard-plugins/${manifest.name}/${relativePath}`;
-  const params = new URLSearchParams();
-  const version = String(manifest.version || "").trim();
-  if (version) params.set("hermes_plugin_v", version);
-  params.set("hermes_asset_epoch", PLUGIN_ASSET_CACHE_EPOCH);
-  const query = params.toString();
-  if (!query) return baseUrl;
-  const separator = baseUrl.includes("?") ? "&" : "?";
-  return `${baseUrl}${separator}${query}`;
-}
-
 export function usePlugins() {
   const [manifests, setManifests] = useState<PluginManifest[]>([]);
   const [plugins, setPlugins] = useState<RegisteredPlugin[]>([]);
@@ -61,11 +41,9 @@ export function usePlugins() {
     const injectedScripts: HTMLScriptElement[] = [];
 
     for (const manifest of manifests) {
-      // Version plugin assets by semantic version plus a dashboard loader epoch.
-      // Railway/CDN/browser caches may otherwise keep an older entry bundle
-      // while the API already serves a newer manifest or host loader contract.
+      // Inject CSS if specified.
       if (manifest.css) {
-        const cssUrl = versionedPluginAssetUrl(manifest, manifest.css);
+        const cssUrl = `${HERMES_BASE_PATH}/dashboard-plugins/${manifest.name}/${manifest.css}`;
         if (!document.querySelector(`link[href="${cssUrl}"]`)) {
           const link = document.createElement("link");
           link.rel = "stylesheet";
@@ -74,21 +52,20 @@ export function usePlugins() {
         }
       }
 
-      const versionedUrl = versionedPluginAssetUrl(manifest, manifest.entry);
-      // In dev, add a second per-load nonce so Vite HMR can clear the
-      // in-memory registry while the browser would otherwise reuse a script.
+      // Load JS bundle. In dev, cache-bust so Vite HMR can clear the
+      // in-memory registry while the browser would otherwise never
+      // re-execute a previously cached <script> URL.
+      const baseUrl = `${HERMES_BASE_PATH}/dashboard-plugins/${manifest.name}/${manifest.entry}`;
       const scriptSrc = import.meta.env.DEV
-        ? `${versionedUrl}${versionedUrl.includes("?") ? "&" : "?"}hermes_dv=${Date.now()}`
-        : versionedUrl;
+        ? `${baseUrl}?hermes_dv=${Date.now()}`
+        : baseUrl;
       if (!import.meta.env.DEV) {
-        if (loadedScripts.current.has(scriptSrc)) continue;
-        loadedScripts.current.add(scriptSrc);
+        if (loadedScripts.current.has(baseUrl)) continue;
+        loadedScripts.current.add(baseUrl);
       }
 
       const script = document.createElement("script");
       script.setAttribute("data-hermes-plugin", manifest.name);
-      script.setAttribute("data-hermes-plugin-version", String(manifest.version || ""));
-      script.setAttribute("data-hermes-asset-epoch", PLUGIN_ASSET_CACHE_EPOCH);
       script.src = scriptSrc;
       script.async = true;
       // SRI integrity verification — defense against compromised plugin
@@ -104,7 +81,7 @@ export function usePlugins() {
       script.onerror = () => {
         setPluginLoadError(manifest.name, "LOAD_FAILED");
         console.warn(
-          `[plugins] Failed to load ${manifest.name} v${manifest.version || "unknown"} epoch ${PLUGIN_ASSET_CACHE_EPOCH} from ${scriptSrc} (open Network tab)`,
+          `[plugins] Failed to load ${manifest.name} from ${scriptSrc} (open Network tab)`,
         );
       };
       script.onload = () => {

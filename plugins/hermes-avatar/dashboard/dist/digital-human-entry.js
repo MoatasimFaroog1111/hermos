@@ -43,7 +43,13 @@
   function assetUrl(fileName) {
     if (ENTRY_SCRIPT_URL) {
       try {
-        return new URL(fileName, ENTRY_SCRIPT_URL).toString();
+        const entry = new URL(ENTRY_SCRIPT_URL, window.location.href);
+        const resolved = new URL(fileName, entry);
+        // Keep the host-provided manifest-version cache key on every nested
+        // runtime asset. Without this, the entry can be fresh while policy,
+        // voice or avatar dependencies remain stale in the browser/CDN cache.
+        if (entry.search) resolved.search = entry.search;
+        return resolved.toString();
       } catch {
         // Fall through to the dashboard base path.
       }

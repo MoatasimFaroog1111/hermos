@@ -5,6 +5,11 @@ set -eu
 export HERMES_DASHBOARD_HOST="${HERMES_DASHBOARD_HOST:-0.0.0.0}"
 export HERMES_DASHBOARD_PORT="${PORT:-${HERMES_DASHBOARD_PORT:-9119}}"
 
+# Digital Human is an application-owned bundled dashboard extension in this
+# deployment. Declare it required so the post-s6 preflight validates its
+# runtime assets and clears stale persisted hide/disable state from /opt/data.
+export HERMES_REQUIRED_BUNDLED_DASHBOARD_PLUGINS="${HERMES_REQUIRED_BUNDLED_DASHBOARD_PLUGINS:-hermes-avatar}"
+
 # The dashboard is the Railway web service's primary process. Keep the
 # supervised dashboard slot disabled so it cannot compete for the same port
 # when an operator also supplied HERMES_DASHBOARD=true in service variables.

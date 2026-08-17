@@ -13,6 +13,11 @@ __pycache__
 dist/
 build/
 
+# Dashboard plugin bundles are committed runtime assets. They are not rebuilt
+# by the Dockerfile, so they must remain in the production build context.
+!plugins/**/dashboard/dist/
+!plugins/**/dashboard/dist/**
+
 # Virtual environments
 venv/
 env/
@@ -59,6 +64,8 @@ htmlcov/
 data/
 .hermes-docker/
 .notebooklm-home/
+.pip-cache/
+.uv-cache/
 
 # Compose/profile runtime state (bind-mounted; avoid ownership/secret issues)
 hermes-config/

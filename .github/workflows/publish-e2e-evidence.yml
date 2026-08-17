@@ -66,6 +66,11 @@ jobs:
             exit 0
           fi
 
+          if [ -z "${GH_SESSION_TOKEN:-}" ]; then
+            echo "::notice::GH_IMAGE_SESSION_TOKEN is not configured; skipping optional inline E2E attachment publishing."
+            exit 0
+          fi
+
           EVIDENCE_DIR="$RUNNER_TEMP/e2e-evidence"
           mkdir -p "$EVIDENCE_DIR"
           gh run download "$SOURCE_RUN_ID" --repo "$SOURCE_REPO" --name "$ARTIFACT_NAME" --dir "$EVIDENCE_DIR"

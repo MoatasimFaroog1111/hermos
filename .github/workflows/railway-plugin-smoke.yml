@@ -61,6 +61,14 @@ jobs:
           # explicitly because it participates in plugin-route isolation.
           node --check web/public/friendly-chat/main.js
 
+          # Dashboard plugin backend modules are dynamically imported by the
+          # server and therefore are not guaranteed to be covered by the web
+          # build. Compile every colocated Python module before probing Railway.
+          while IFS= read -r -d '' py; do
+            echo "syntax-check ${py}"
+            python -m py_compile "${py}"
+          done < <(find "${plugin_root}" -maxdepth 1 -type f -name '*.py' -print0 | sort -z)
+
       - name: Probe deployed Digital Human discovery contract
         env:
           BASE_URL: https://brilliant-expression-production-c3d8.up.railway.app

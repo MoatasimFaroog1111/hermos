@@ -10,6 +10,7 @@ import type {
   MemoryProviderInfo,
   MemoryProviderSetupInfo,
   MemoryProviderSetupResult,
+  PluginManifestResponse,
   PluginsHubResponse,
 } from "@/lib/api";
 import { Button } from "@nous-research/ui/ui/components/button";
@@ -280,6 +281,7 @@ function MemoryProviderSetupHint({
 
 export default function PluginsPage() {
   const [hub, setHub] = useState<PluginsHubResponse | null>(null);
+  const [fallbackDashboardPlugins, setFallbackDashboardPlugins] = useState<PluginManifestResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [installId, setInstallId] = useState("");
   const [installForce, setInstallForce] = useState(false);
@@ -307,13 +309,28 @@ export default function PluginsPage() {
       .getPluginsHub()
       .then((h) => {
         setHub(h);
+        setFallbackDashboardPlugins([]);
         const p = h.providers;
         setMemorySel(
           memorySelection ?? (p.memory_provider ? p.memory_provider : MEMORY_PROVIDER_BUILTIN),
         );
         setContextSel(p.context_engine || "compressor");
       })
-      .catch(() => showToast(t.common.loading, "error"));
+      .catch(async (hubError) => {
+        try {
+          const manifests = await api.getPlugins();
+          setHub(null);
+          setFallbackDashboardPlugins(manifests);
+          showToast(
+            "Plugin Hub metadata failed to load; dashboard plugins are available in safe mode.",
+            "error",
+          );
+        } catch {
+          setHub(null);
+          setFallbackDashboardPlugins([]);
+          showToast(hubError instanceof Error ? hubError.message : t.common.loading, "error");
+        }
+      });
   }, [showToast, t.common.loading]);
 
   useEffect(() => {
@@ -506,6 +523,7 @@ export default function PluginsPage() {
 
   const rows = hub?.plugins ?? [];
   const providers = hub?.providers;
+  const dashboardOnlyPlugins = hub?.orphan_dashboard_plugins ?? fallbackDashboardPlugins;
   const selectedMemoryName = memorySel === MEMORY_PROVIDER_BUILTIN ? "" : memorySel;
   const selectedMemoryInfo = selectedMemoryName
     ? providers?.memory_options.find((provider) => provider.name === selectedMemoryName)
@@ -857,7 +875,7 @@ export default function PluginsPage() {
           )}
         </div>
 
-        {(hub?.orphan_dashboard_plugins?.length ?? 0) > 0 ? (
+        {dashboardOnlyPlugins.length > 0 ? (
 
 
           <div className="flex flex-col gap-3 opacity-95">
@@ -868,7 +886,7 @@ export default function PluginsPage() {
 
             <ul className="flex flex-col gap-2 rounded border border-current/15 p-4">
 
-              {hub!.orphan_dashboard_plugins.map((m) => (
+              {dashboardOnlyPlugins.map((m) => (
 
                 <li className="text-xs text-text-secondary" key={m.name}>
 
@@ -876,7 +894,7 @@ export default function PluginsPage() {
                   {m.label ?? m.name} — {m.description || m.tab?.path}
 
 
-                  {!m.tab?.hidden ? (
+                  {m.tab?.path && !m.tab.hidden ? (
 
 
                     <Link className="ml-3 inline-flex items-center gap-1 underline" to={m.tab.path}>

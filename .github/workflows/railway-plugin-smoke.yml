@@ -1,0 +1,172 @@
+name: Railway Digital Human smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "plugins/hermes-avatar/**"
+      - "web/src/plugins/**"
+      - "web/src/pages/PluginsPage.tsx"
+      - "web/src/main.tsx"
+      - "web/src/lib/vite-preload-recovery*"
+      - "web/public/friendly-chat/**"
+      - "hermes_cli/web_server.py"
+      - "hermes_cli/required_dashboard_plugins.py"
+      - "hermes_cli/dashboard_auth/**"
+      - "docker/**"
+      - ".dockerignore"
+      - ".github/workflows/railway-plugin-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: read
+
+concurrency:
+  group: railway-digital-human-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check out expected plugin contract
+        uses: actions/checkout@v4
+
+      - name: Validate bundled plugin runtime assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          manifest="plugins/hermes-avatar/dashboard/manifest.json"
+          plugin_root="plugins/hermes-avatar/dashboard"
+          expected_entry="$(jq -r '.entry' "${manifest}")"
+          expected_css="$(jq -r '.css // empty' "${manifest}")"
+          expected_api="$(jq -r '.api // empty' "${manifest}")"
+
+          test -s "${plugin_root}/${expected_entry}"
+          if [[ -n "${expected_css}" ]]; then
+            test -s "${plugin_root}/${expected_css}"
+          fi
+          if [[ -n "${expected_api}" ]]; then
+            test -s "${plugin_root}/${expected_api}"
+          fi
+
+          while IFS= read -r -d '' js; do
+            echo "syntax-check ${js}"
+            node --check "${js}"
+          done < <(find "${plugin_root}/dist" -type f -name '*.js' -print0 | sort -z)
+
+          # Friendly Chat is plain browser ESM rather than TypeScript. Parse it
+          # explicitly because it participates in plugin-route isolation.
+          node --check web/public/friendly-chat/main.js
+
+          # Dashboard plugin backend modules are dynamically imported by the
+          # server and therefore are not guaranteed to be covered by the web
+          # build. Compile every colocated Python module before probing Railway.
+          while IFS= read -r -d '' py; do
+            echo "syntax-check ${py}"
+            python -m py_compile "${py}"
+          done < <(find "${plugin_root}" -maxdepth 1 -type f -name '*.py' -print0 | sort -z)
+
+      - name: Wait for exact Railway deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          status_url="https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/status"
+          railway_context="Hermes - brilliant-expression"
+
+          for attempt in $(seq 1 60); do
+            curl -fsS \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${status_url}" > /tmp/commit-status.json
+
+            railway_state="$(jq -r --arg context "${railway_context}" '[.statuses[] | select(.context == $context)][0].state // "missing"' /tmp/commit-status.json)"
+            railway_description="$(jq -r --arg context "${railway_context}" '[.statuses[] | select(.context == $context)][0].description // ""' /tmp/commit-status.json)"
+
+            echo "attempt=${attempt} sha=${GITHUB_SHA} railway=${railway_state} ${railway_description}"
+
+            case "${railway_state}" in
+              success)
+                echo "Railway confirmed exact deployment ${GITHUB_SHA}."
+                exit 0
+                ;;
+              failure|error)
+                echo "Railway deployment failed for exact commit ${GITHUB_SHA}." >&2
+                cat /tmp/commit-status.json >&2
+                exit 1
+                ;;
+            esac
+
+            sleep 10
+          done
+
+          echo "Railway did not confirm exact commit ${GITHUB_SHA} before timeout." >&2
+          cat /tmp/commit-status.json >&2 2>/dev/null || true
+          exit 1
+
+      - name: Probe deployed Digital Human discovery contract
+        env:
+          BASE_URL: https://brilliant-expression-production-c3d8.up.railway.app
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          manifest="plugins/hermes-avatar/dashboard/manifest.json"
+          expected_name="$(jq -r '.name' "${manifest}")"
+          expected_version="$(jq -r '.version' "${manifest}")"
+          expected_path="$(jq -r '.tab.path' "${manifest}")"
+          expected_entry="$(jq -r '.entry' "${manifest}")"
+          expected_css="$(jq -r '.css // empty' "${manifest}")"
+
+          if [[ -z "${expected_name}" || -z "${expected_version}" || -z "${expected_path}" || -z "${expected_entry}" ]]; then
+            echo "Invalid Digital Human manifest in ${manifest}." >&2
+            exit 1
+          fi
+
+          discovery_url="${BASE_URL}/api/dashboard/plugins?railway_smoke=${GITHUB_SHA}"
+          plugins_page_url="${BASE_URL}/plugins?railway_smoke=${GITHUB_SHA}"
+          entry_url="${BASE_URL}/dashboard-plugins/${expected_name}/${expected_entry}?hermes_plugin_v=${expected_version}&railway_smoke=${GITHUB_SHA}"
+          css_url="${BASE_URL}/dashboard-plugins/${expected_name}/${expected_css}?hermes_plugin_v=${expected_version}&railway_smoke=${GITHUB_SHA}"
+
+          discovery_code="$(curl -sS --max-time 15 -H 'Cache-Control: no-cache' -o /tmp/dashboard-plugins.json -w '%{http_code}' "${discovery_url}" || true)"
+          if [[ "${discovery_code}" != "200" ]]; then
+            echo "Dashboard discovery returned HTTP ${discovery_code}." >&2
+            cat /tmp/dashboard-plugins.json >&2 2>/dev/null || true
+            exit 1
+          fi
+
+          jq -e \
+            --arg name "${expected_name}" \
+            --arg version "${expected_version}" \
+            --arg path "${expected_path}" \
+            --arg entry "${expected_entry}" \
+            '.[] | select(.name == $name and .tab.path == $path and .entry == $entry and .version == $version and .source == "bundled")' \
+            /tmp/dashboard-plugins.json >/dev/null
+
+          page_code="$(curl -sS --max-time 15 -H 'Cache-Control: no-cache' -o /dev/null -w '%{http_code}' "${plugins_page_url}" || true)"
+          entry_code="$(curl -sS --max-time 15 -H 'Cache-Control: no-cache' -o /dev/null -w '%{http_code}' "${entry_url}" || true)"
+          css_code="200"
+          if [[ -n "${expected_css}" ]]; then
+            css_code="$(curl -sS --max-time 15 -H 'Cache-Control: no-cache' -o /dev/null -w '%{http_code}' "${css_url}" || true)"
+          fi
+
+          # Public Railway redirects unauthenticated HTML/static requests to
+          # /login. Discovery is intentionally public and authoritative for the
+          # plugin contract, while exact-code freshness is proven by the Railway
+          # commit status gate above.
+          if [[ ! "${page_code}" =~ ^(200|302|303|307|308)$ ]] || \
+             [[ ! "${entry_code}" =~ ^(200|302|303|307|308)$ ]] || \
+             [[ ! "${css_code}" =~ ^(200|302|303|307|308)$ ]]; then
+            echo "Unexpected production status: page=${page_code} entry=${entry_code} css=${css_code}." >&2
+            exit 1
+          fi
+
+          echo "Digital Human exact deployment is healthy; page=${page_code} entry=${entry_code} css=${css_code}."
+          jq -c --arg name "${expected_name}" '.[] | select(.name == $name)' /tmp/dashboard-plugins.json

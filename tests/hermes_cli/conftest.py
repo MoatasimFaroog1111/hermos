@@ -54,3 +54,22 @@ def _suppress_concurrent_hermes_gate(request, monkeypatch):
         lambda *_a, **_k: [],
         raising=False,
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_openrouter_catalog_in_model_unit_tests(request, monkeypatch):
+    """Keep OpenRouter fetch unit tests independent of the remote manifest.
+
+    ``TestFetchOpenRouterModels`` supplies its own synthetic ``/v1/models``
+    responses and asserts behavior against the in-repo curated snapshot.
+    Letting the docs-hosted catalog participate makes those unit tests depend
+    on whichever models happen to be published remotely at CI runtime.
+
+    Individual tests can still override this default with ``unittest.mock``
+    when they explicitly need a custom curated-manifest result.
+    """
+    if "tests/hermes_cli/test_models.py::TestFetchOpenRouterModels::" not in request.node.nodeid:
+        return
+    from hermes_cli import model_catalog
+
+    monkeypatch.setattr(model_catalog, "get_curated_openrouter_models", lambda: None)

@@ -69,6 +69,18 @@ cd /opt/data
 # directory, not /opt/data.
 cd "$_hermes_orig_cwd"
 
+# Managed deployments can declare application-owned bundled dashboard plugins
+# that must survive stale persisted hide/disable state on the durable volume.
+# This runs after s6's stage2 volume ownership bootstrap and before the target
+# process, under the same hermes UID that will own config.yaml.
+if [ -n "${HERMES_REQUIRED_BUNDLED_DASHBOARD_PLUGINS:-}" ]; then
+    if [ "$(id -u)" = 0 ]; then
+        s6-setuidgid hermes python -m hermes_cli.required_dashboard_plugins
+    else
+        python -m hermes_cli.required_dashboard_plugins
+    fi
+fi
+
 if [ $# -eq 0 ]; then
     drop hermes
 fi

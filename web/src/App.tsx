@@ -62,6 +62,7 @@ import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { Typography } from "@nous-research/ui/ui/components/typography/index";
 import { ConfirmDialog } from "@nous-research/ui/ui/components/confirm-dialog";
 import { cn } from "@/lib/utils";
+import { anchoredSidebarPluginPaths } from "@/lib/plugin-nav";
 import { SidebarFooter } from "@/components/SidebarFooter";
 import { SidebarStatusStrip, gatewayLine } from "@/components/SidebarStatusStrip";
 import { useBelowBreakpoint } from "@nous-research/ui/hooks/use-below-breakpoint";
@@ -175,7 +176,7 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
 };
 
 // Route placeholder for /chat.  The persistent ChatPage host (rendered
-// outside <Routes> when embedded chat is on) paints on top; this empty
+// outside <Routes>) when embedded chat is on) paints on top; this empty
 // element just claims the path so the `*` catch-all redirect doesn't
 // fire when the user navigates to /chat.
 function ChatRouteSink() {
@@ -294,11 +295,15 @@ function partitionSidebarNav(
 ): { coreItems: NavItem[]; pluginItems: NavItem[] } {
   const merged = buildNavItems(builtIn, manifests);
   const builtinPaths = new Set(builtIn.map((i) => i.path));
+  const anchoredPluginPaths = anchoredSidebarPluginPaths(manifests, builtinPaths);
   const coreItems: NavItem[] = [];
   const pluginItems: NavItem[] = [];
   for (const item of merged) {
-    if (builtinPaths.has(item.path)) coreItems.push(item);
-    else pluginItems.push(item);
+    if (builtinPaths.has(item.path) || anchoredPluginPaths.has(item.path)) {
+      coreItems.push(item);
+    } else {
+      pluginItems.push(item);
+    }
   }
   return { coreItems, pluginItems };
 }

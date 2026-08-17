@@ -1,6 +1,50 @@
 (function () {
   "use strict";
 
+  const API_FLAG = "__HERMES_HUMAN_BEHAVIOR__";
+  const PATCH_FLAG = Symbol.for("hermes.avatar.humanBehaviorPatched");
+  const ENGINE_KEY = Symbol.for("hermes.avatar.humanBehaviorEngine");
+
+  if (window[API_FLAG]) return;
+
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+  const randomBetween = (min, max) => min + Math.random() * (max - min);
+  const chance = probability => Math.random() < probability;
+  const expLerp = (current, target, speed, deltaTime) => {
+    const alpha = 1 - Math.exp(-Math.max(0, deltaTime) * speed);
+    return current + (target - current) * alpha;
+  };
+
+  function smoothPulse(age, duration) {
+    if (duration <= 0 || age < 0 || age > duration) return 0;
+    const phase = clamp(age / duration, 0, 1);
+    return Math.sin(phase * Math.PI);
+  }
+
+  function speechEnergy(signals = {}) {
+    if (signals.state !== "speaking") return 0;
+    const mouthOpen = clamp(Number(signals.mouthOpen) || 0, 0, 1);
+    const jaw = clamp(Number(signals.jaw) || 0, 0, 1);
+    const mouthWide = clamp(Number(signals.mouthWide) || 0, 0, 1);
+    return clamp(0.15 + mouthOpen * 0.48 + jaw * 0.32 + mouthWide * 0.10, 0, 1);
+  }
+
+  class IntervalGate {
+    constructor(minSeconds, maxSeconds) {
+      this.minSeconds = minSeconds;
+      this.maxSeconds = maxSeconds;
+      this.remaining = randomBetween(minSeconds, maxSeconds);
+    }
+
+    reset(minSeconds = this.minSeconds, maxSeconds = this.maxSeconds) {
+      this.remaining = randomBetween(minSeconds, maxSeconds);
+    }
+
+    tick(deltaTime, minSeconds = this.minSeconds, maxSeconds = this.maxSeconds) {
+      this.remaining -= deltaTime;
+      if (this.remaining > 0) return false;
+      this.remaining = randomBetween(minSeconds, maxSeconds);
+      return true;
   const STATES = Object.freeze({
     IDLE: "idle",
     LISTENING: "listening",
@@ -36,452 +80,474 @@
   }
 
   class AttentionController {
-    constructor(noise) {
-      this.noise = noise;
-      this.gazeYaw = 0;
-      this.gazePitch = 0;
+    constructor() {
+      this.yaw = 0;
+      this.pitch = 0;
       this.targetYaw = 0;
       this.targetPitch = 0;
-      this.nextShiftAt = 0;
-      this.lastState = STATES.IDLE;
+      this.breakGate = new IntervalGate(1.8, 4.6);
+      this.state = "idle";
+      this.stateAge = 0;
     }
 
-    update(time, deltaTime, state, pointer) {
-      const pointerWeight = pointer?.active ? 0.72 : 0;
-      const directAttention = state === STATES.LISTENING || state === STATES.SPEAKING;
-      const thinking = state === STATES.THINKING;
-
-      if (time >= this.nextShiftAt || state !== this.lastState) {
-        this.lastState = state;
-        if (thinking) {
-          this.targetYaw = this.noise.range(-0.24, 0.24);
-          this.targetPitch = this.noise.range(-0.08, 0.14);
-          this.nextShiftAt = time + this.noise.range(1.3, 2.8);
-        } else if (directAttention) {
-          const briefBreak = this.noise.next() < 0.18;
-          this.targetYaw = briefBreak
-            ? this.noise.range(-0.10, 0.10)
-            : this.noise.range(-0.025, 0.025);
-          this.targetPitch = briefBreak
-            ? this.noise.range(-0.035, 0.035)
-            : this.noise.range(-0.012, 0.012);
-          this.nextShiftAt = time + this.noise.range(1.8, 4.1);
-        } else {
-          this.targetYaw = this.noise.range(-0.11, 0.11);
-          this.targetPitch = this.noise.range(-0.045, 0.055);
-          this.nextShiftAt = time + this.noise.range(2.4, 5.8);
-        }
-      }
-
-      const responsiveness = 1 - Math.exp(-deltaTime * (directAttention ? 4.8 : 2.4));
-      const targetYaw = lerp(this.targetYaw, pointer?.yaw || 0, pointerWeight);
-      const targetPitch = lerp(this.targetPitch, pointer?.pitch || 0, pointerWeight);
-      this.gazeYaw = lerp(this.gazeYaw, targetYaw, responsiveness);
-      this.gazePitch = lerp(this.gazePitch, targetPitch, responsiveness);
-
-      return {
-        yaw: this.gazeYaw,
-        pitch: this.gazePitch,
-        eyeYaw: clamp(this.gazeYaw * 1.35, -0.28, 0.28),
-        eyePitch: clamp(this.gazePitch * 1.15, -0.18, 0.18),
-      };
-    }
-  }
-
-  class BlinkController {
-    constructor(noise) {
-      this.noise = noise;
-      this.value = 0;
-      this.phase = "open";
-      this.phaseStartedAt = 0;
-      this.nextBlinkAt = 0.8 + noise.range(1.1, 3.5);
-      this.pendingSecondBlink = false;
-    }
-
-    intervalFor(state) {
-      if (state === STATES.THINKING) return this.noise.range(3.6, 7.2);
-      if (state === STATES.LISTENING) return this.noise.range(2.1, 5.0);
-      if (state === STATES.SPEAKING) return this.noise.range(2.5, 5.7);
-      return this.noise.range(2.3, 6.2);
-    }
-
-    update(time, state) {
-      if (this.phase === "open" && time >= this.nextBlinkAt) {
-        this.phase = "closing";
-        this.phaseStartedAt = time;
-        this.pendingSecondBlink = this.noise.next() < 0.12;
-      }
-
-      const elapsed = time - this.phaseStartedAt;
-      if (this.phase === "closing") {
-        this.value = clamp(elapsed / 0.055, 0, 1);
-        if (elapsed >= 0.055) {
-          this.phase = "closed";
-          this.phaseStartedAt = time;
-        }
-      } else if (this.phase === "closed") {
-        this.value = 1;
-        if (elapsed >= 0.045) {
-          this.phase = "opening";
-          this.phaseStartedAt = time;
-        }
-      } else if (this.phase === "opening") {
-        this.value = 1 - clamp(elapsed / 0.085, 0, 1);
-        if (elapsed >= 0.085) {
-          this.value = 0;
-          this.phase = "open";
-          this.phaseStartedAt = time;
-          if (this.pendingSecondBlink) {
-            this.pendingSecondBlink = false;
-            this.nextBlinkAt = time + this.noise.range(0.14, 0.24);
-          } else {
-            this.nextBlinkAt = time + this.intervalFor(state);
-          }
-        }
-      }
-      return this.value;
-    }
-  }
-
-  class ExpressionController {
-    constructor(noise) {
-      this.noise = noise;
-      this.smile = 0.10;
-      this.brow = 0.05;
-      this.squint = 0;
-      this.nextMicroExpressionAt = 0;
-      this.microSmile = 0;
-      this.microBrow = 0;
-    }
-
-    update(time, deltaTime, state, speechEnergy) {
-      if (time >= this.nextMicroExpressionAt) {
-        this.microSmile = this.noise.range(-0.025, 0.055);
-        this.microBrow = this.noise.range(-0.018, 0.05);
-        this.nextMicroExpressionAt = time + this.noise.range(2.5, 6.5);
-      }
-
-      let targetSmile = 0.10;
-      let targetBrow = 0.05;
-      let targetSquint = 0;
-
-      if (state === STATES.LISTENING) {
-        targetSmile = 0.11;
-        targetBrow = 0.16;
-      } else if (state === STATES.THINKING) {
-        targetSmile = 0.035;
-        targetBrow = 0.09;
-        targetSquint = 0.035;
-      } else if (state === STATES.SPEAKING) {
-        targetSmile = 0.17 + speechEnergy * 0.10;
-        targetBrow = 0.07 + speechEnergy * 0.05;
-      } else if (state === STATES.ERROR) {
-        targetSmile = 0.01;
-        targetBrow = 0.20;
-      }
-
-      targetSmile = clamp(targetSmile + this.microSmile, 0, 0.5);
-      targetBrow = clamp(targetBrow + this.microBrow, 0, 0.45);
-      const alpha = 1 - Math.exp(-deltaTime * 3.7);
-      this.smile = lerp(this.smile, targetSmile, alpha);
-      this.brow = lerp(this.brow, targetBrow, alpha);
-      this.squint = lerp(this.squint, targetSquint, alpha);
-      return { smile: this.smile, brow: this.brow, squint: this.squint };
-    }
-  }
-
-  class BodyMotionController {
-    constructor(noise) {
-      this.noise = noise;
-      this.weightShift = 0;
-      this.targetWeightShift = 0;
-      this.nextWeightShiftAt = 0;
-      this.gestureSide = 1;
-      this.nextGestureAt = 0;
-      this.gesture = 0;
-    }
-
-    update(time, deltaTime, state, speechEnergy) {
-      if (time >= this.nextWeightShiftAt) {
-        this.targetWeightShift = this.noise.range(-0.018, 0.018);
-        this.nextWeightShiftAt = time + this.noise.range(3.8, 8.4);
-      }
-      this.weightShift = lerp(
-        this.weightShift,
-        this.targetWeightShift,
-        1 - Math.exp(-deltaTime * 0.75),
-      );
-
-      if (state === STATES.SPEAKING && time >= this.nextGestureAt && speechEnergy > 0.18) {
-        this.gesture = this.noise.range(0.45, 1.0) * speechEnergy;
-        this.gestureSide *= -1;
-        this.nextGestureAt = time + this.noise.range(0.8, 2.2);
+    enter(state) {
+      if (state === this.state) return;
+      this.state = state || "idle";
+      this.stateAge = 0;
+      if (this.state === "thinking") {
+        this.targetYaw = randomBetween(-0.18, 0.18);
+        this.targetPitch = randomBetween(-0.08, 0.05);
+        this.breakGate.reset(1.1, 2.4);
+      } else if (this.state === "listening") {
+        this.targetYaw = randomBetween(-0.035, 0.035);
+        this.targetPitch = randomBetween(-0.02, 0.025);
+        this.breakGate.reset(2.2, 4.8);
+      } else if (this.state === "speaking") {
+        this.targetYaw = randomBetween(-0.055, 0.055);
+        this.targetPitch = randomBetween(-0.025, 0.03);
+        this.breakGate.reset(2.4, 5.5);
       } else {
-        this.gesture *= Math.exp(-deltaTime * 4.2);
+        this.targetYaw = randomBetween(-0.07, 0.07);
+        this.targetPitch = randomBetween(-0.035, 0.035);
+        this.breakGate.reset(2.8, 6.2);
+      }
+    }
+
+    pickTarget() {
+      if (this.state === "thinking") {
+        const side = chance(0.5) ? -1 : 1;
+        this.targetYaw = side * randomBetween(0.09, 0.24);
+        this.targetPitch = randomBetween(-0.10, 0.055);
+        return;
+      }
+      if (this.state === "listening") {
+        this.targetYaw = randomBetween(-0.045, 0.045);
+        this.targetPitch = randomBetween(-0.03, 0.025);
+        return;
+      }
+      if (this.state === "speaking") {
+        const glance = chance(0.18);
+        this.targetYaw = glance ? randomBetween(-0.12, 0.12) : randomBetween(-0.055, 0.055);
+        this.targetPitch = randomBetween(-0.035, 0.035);
+        return;
+      }
+      this.targetYaw = randomBetween(-0.095, 0.095);
+      this.targetPitch = randomBetween(-0.05, 0.04);
+    }
+
+    update(deltaTime, state, pointerActive, pointerYaw, pointerPitch) {
+      this.enter(state);
+      this.stateAge += deltaTime;
+
+      if (pointerActive) {
+        this.targetYaw = clamp(pointerYaw, -0.42, 0.42);
+        this.targetPitch = clamp(pointerPitch, -0.24, 0.24);
+      } else if (this.breakGate.tick(deltaTime)) {
+        this.pickTarget();
       }
 
-      const listeningNod = state === STATES.LISTENING
-        ? Math.max(0, Math.sin(time * 1.55 + 0.4)) * 0.012
-        : 0;
-      const breathPhase = time * 1.28 + Math.sin(time * 0.13) * 0.5;
-      const breath = Math.sin(breathPhase) * 0.0075;
-      const speechNod = state === STATES.SPEAKING
-        ? Math.sin(time * 4.7) * 0.016 * speechEnergy
-        : 0;
+      const speed = pointerActive ? 10.5 : this.state === "thinking" ? 2.7 : 4.4;
+      this.yaw = expLerp(this.yaw, this.targetYaw, speed, deltaTime);
+      this.pitch = expLerp(this.pitch, this.targetPitch, speed, deltaTime);
+      return { yaw: this.yaw, pitch: this.pitch };
+    }
+  }
+
+  class SaccadeController {
+    constructor() {
+      this.gate = new IntervalGate(0.22, 1.05);
+      this.x = 0;
+      this.y = 0;
+      this.targetX = 0;
+      this.targetY = 0;
+    }
+
+    update(deltaTime, state) {
+      const min = state === "thinking" ? 0.18 : 0.28;
+      const max = state === "listening" ? 0.85 : 1.25;
+      if (this.gate.tick(deltaTime, min, max)) {
+        const amplitude = state === "thinking" ? 0.028 : 0.018;
+        this.targetX = randomBetween(-amplitude, amplitude);
+        this.targetY = randomBetween(-amplitude * 0.55, amplitude * 0.55);
+      }
+      this.x = expLerp(this.x, this.targetX, 18, deltaTime);
+      this.y = expLerp(this.y, this.targetY, 18, deltaTime);
+      return { x: this.x, y: this.y };
+    }
+  }
+
+  class BreathController {
+    constructor() {
+      this.phase = randomBetween(0, Math.PI * 2);
+      this.rate = randomBetween(0.82, 1.02);
+      this.rateTarget = this.rate;
+      this.rateGate = new IntervalGate(5.0, 9.0);
+    }
+
+    update(deltaTime, state) {
+      if (this.rateGate.tick(deltaTime)) {
+        const base = state === "speaking" ? 1.02 : state === "thinking" ? 0.88 : 0.94;
+        this.rateTarget = base * randomBetween(0.90, 1.10);
+      }
+      this.rate = expLerp(this.rate, this.rateTarget, 0.45, deltaTime);
+      this.phase += deltaTime * this.rate * Math.PI;
+      const primary = Math.sin(this.phase);
+      const secondary = Math.sin(this.phase * 0.51 + 1.7) * 0.17;
+      const shaped = Math.sign(primary) * Math.pow(Math.abs(primary), 1.15);
+      return (shaped + secondary) * 0.0085;
+    }
+  }
+
+  class PostureController {
+    constructor() {
+      this.gate = new IntervalGate(4.5, 9.5);
+      this.yaw = 0;
+      this.roll = 0;
+      this.targetYaw = randomBetween(-0.008, 0.008);
+      this.targetRoll = randomBetween(-0.006, 0.006);
+    }
+
+    update(deltaTime, state) {
+      const stillness = state === "listening" ? 0.62 : state === "thinking" ? 0.78 : 1;
+      if (this.gate.tick(deltaTime, 4.0, 10.0)) {
+        this.targetYaw = randomBetween(-0.016, 0.016) * stillness;
+        this.targetRoll = randomBetween(-0.010, 0.010) * stillness;
+      }
+      this.yaw = expLerp(this.yaw, this.targetYaw, 0.75, deltaTime);
+      this.roll = expLerp(this.roll, this.targetRoll, 0.75, deltaTime);
+      return { yaw: this.yaw, roll: this.roll };
+    }
+  }
+
+  class GestureController {
+    constructor() {
+      this.state = "idle";
+      this.stateAge = 0;
+      this.nextSpeechGesture = randomBetween(0.45, 1.0);
+      this.nextListeningNod = randomBetween(1.6, 3.8);
+      this.gestureAge = Infinity;
+      this.gestureDuration = 0.55;
+      this.gestureSign = 1;
+      this.gestureStrength = 0;
+      this.listeningAge = Infinity;
+      this.listeningDuration = 0.34;
+      this.listeningStrength = 0;
+    }
+
+    enter(state) {
+      if (state === this.state) return;
+      this.state = state || "idle";
+      this.stateAge = 0;
+      this.nextSpeechGesture = randomBetween(0.35, 0.9);
+      this.nextListeningNod = randomBetween(1.2, 2.8);
+      if (this.state === "speaking") this.triggerSpeech(0.45);
+      if (this.state === "listening" && chance(0.35)) this.triggerListening(0.45);
+    }
+
+    triggerSpeech(strength) {
+      this.gestureAge = 0;
+      this.gestureDuration = randomBetween(0.42, 0.78);
+      this.gestureSign = chance(0.5) ? -1 : 1;
+      this.gestureStrength = clamp(strength * randomBetween(0.72, 1.05), 0, 1);
+    }
+
+    triggerListening(strength = 0.6) {
+      this.listeningAge = 0;
+      this.listeningDuration = randomBetween(0.26, 0.42);
+      this.listeningStrength = clamp(strength * randomBetween(0.75, 1.10), 0, 1);
+    }
+
+    update(deltaTime, state, speech) {
+      this.enter(state);
+      this.stateAge += deltaTime;
+      this.gestureAge += deltaTime;
+      this.listeningAge += deltaTime;
+
+      if (state === "speaking") {
+        this.nextSpeechGesture -= deltaTime;
+        if (this.nextSpeechGesture <= 0) {
+          this.triggerSpeech(0.35 + speech * 0.65);
+          this.nextSpeechGesture = randomBetween(0.55, 1.45) / Math.max(0.45, 0.65 + speech);
+        }
+      }
+
+      if (state === "listening") {
+        this.nextListeningNod -= deltaTime;
+        if (this.nextListeningNod <= 0) {
+          this.triggerListening(randomBetween(0.35, 0.75));
+          this.nextListeningNod = randomBetween(1.8, 4.8);
+        }
+      }
+
+      const speechEnvelope = smoothPulse(this.gestureAge, this.gestureDuration) * this.gestureStrength;
+      const listenEnvelope = smoothPulse(this.listeningAge, this.listeningDuration) * this.listeningStrength;
+      const headNod = -speechEnvelope * 0.030 - listenEnvelope * 0.026;
+      const headTurn = speechEnvelope * this.gestureSign * 0.034;
+      const headRoll = speechEnvelope * this.gestureSign * 0.014;
+      const arm = speechEnvelope * (0.055 + speech * 0.055);
 
       return {
-        breath,
-        weightShift: this.weightShift,
-        headNod: listeningNod + speechNod,
-        torsoYaw: this.weightShift * 0.8,
-        shoulderLift: Math.abs(breath) * 0.55,
-        gesture: this.gesture,
-        gestureSide: this.gestureSide,
+        headNod,
+        headTurn,
+        headRoll,
+        arm,
+        side: this.gestureSign,
       };
     }
   }
 
   class HumanBehaviorEngine {
-    constructor(options = {}) {
-      this.noise = new SeededNoise(options.seed);
-      this.attention = new AttentionController(this.noise);
-      this.blink = new BlinkController(this.noise);
-      this.expression = new ExpressionController(this.noise);
-      this.body = new BodyMotionController(this.noise);
-      this.reducedMotion = Boolean(options.reducedMotion);
-      this.state = STATES.IDLE;
-      this.output = this.snapshot();
+    constructor(renderer) {
+      this.renderer = renderer;
+      this.attention = new AttentionController();
+      this.saccades = new SaccadeController();
+      this.breath = new BreathController();
+      this.posture = new PostureController();
+      this.gestures = new GestureController();
+      this.state = "idle";
+      this.stateAge = 0;
+      this.microHeadYaw = 0;
+      this.microHeadPitch = 0;
+      this.microGate = new IntervalGate(1.4, 3.5);
     }
 
-    snapshot() {
+    updateState(deltaTime, state) {
+      if (state !== this.state) {
+        this.state = state || "idle";
+        this.stateAge = 0;
+      } else {
+        this.stateAge += deltaTime;
+      }
+    }
+
+    updateMicroHead(deltaTime) {
+      if (this.microGate.tick(deltaTime, 1.2, 3.8)) {
+        const stateScale = this.state === "listening" ? 0.55 : this.state === "thinking" ? 1.15 : 0.82;
+        this.microHeadYaw = randomBetween(-0.016, 0.016) * stateScale;
+        this.microHeadPitch = randomBetween(-0.010, 0.010) * stateScale;
+      }
       return {
-        blink: 0,
-        gazeYaw: 0,
-        gazePitch: 0,
-        eyeYaw: 0,
-        eyePitch: 0,
-        smile: 0.10,
-        brow: 0.05,
-        squint: 0,
-        breath: 0,
-        weightShift: 0,
-        headNod: 0,
-        torsoYaw: 0,
-        shoulderLift: 0,
-        gesture: 0,
-        gestureSide: 1,
+        yaw: this.microHeadYaw,
+        pitch: this.microHeadPitch,
       };
     }
 
-    update({ time = 0, deltaTime = 1 / 60, signals = {}, pointer = {} } = {}) {
-      this.state = signals.state || STATES.IDLE;
-      const motionScale = this.reducedMotion ? 0.30 : 1;
-      const speechEnergy = this.state === STATES.SPEAKING
-        ? clamp(
-          0.16
-          + (Number(signals.mouthOpen) || 0) * 0.45
-          + (Number(signals.jaw) || 0) * 0.35
-          + (Number(signals.mouthWide) || 0) * 0.10,
-          0,
-          1,
-        )
-        : 0;
+    sample(deltaTime) {
+      const r = this.renderer;
+      const signals = r.signals || {};
+      const state = signals.state || "idle";
+      this.updateState(deltaTime, state);
 
-      const attention = this.attention.update(time, deltaTime, this.state, pointer);
-      const blink = this.blink.update(time, this.state);
-      const expression = this.expression.update(time, deltaTime, this.state, speechEnergy);
-      const body = this.body.update(time, deltaTime, this.state, speechEnergy);
+      if (!r.pointerActive) {
+        r.pointerYaw *= Math.exp(-deltaTime * 2.8);
+        r.pointerPitch *= Math.exp(-deltaTime * 2.8);
+      }
 
-      this.output = {
-        blink,
-        gazeYaw: attention.yaw * motionScale,
-        gazePitch: attention.pitch * motionScale,
-        eyeYaw: attention.eyeYaw * motionScale,
-        eyePitch: attention.eyePitch * motionScale,
-        smile: expression.smile,
-        brow: expression.brow,
-        squint: expression.squint,
-        breath: body.breath * motionScale,
-        weightShift: body.weightShift * motionScale,
-        headNod: body.headNod * motionScale,
-        torsoYaw: body.torsoYaw * motionScale,
-        shoulderLift: body.shoulderLift * motionScale,
-        gesture: body.gesture * motionScale,
-        gestureSide: body.gestureSide,
+      const attention = this.attention.update(
+        deltaTime,
+        state,
+        Boolean(r.pointerActive),
+        r.pointerYaw,
+        r.pointerPitch,
+      );
+      const saccade = this.saccades.update(deltaTime, state);
+      const breathing = this.breath.update(deltaTime, state);
+      const posture = this.posture.update(deltaTime, state);
+      const speech = speechEnergy(signals);
+      const gesture = this.gestures.update(deltaTime, state, speech);
+      const micro = this.updateMicroHead(deltaTime);
+
+      const gazeYaw = attention.yaw + saccade.x;
+      const gazePitch = attention.pitch + saccade.y;
+      r.currentYaw = expLerp(r.currentYaw || 0, gazeYaw, r.pointerActive ? 13 : 8, deltaTime);
+      r.currentPitch = expLerp(r.currentPitch || 0, gazePitch, r.pointerActive ? 13 : 8, deltaTime);
+      r.attentionPulse *= Math.exp(-deltaTime * 3.7);
+
+      const attentionNod = Math.sin((1 - r.attentionPulse) * Math.PI * 1.6)
+        * 0.030 * r.attentionPulse;
+
+      const stateHeadPitch = state === "listening"
+        ? 0.018
+        : state === "thinking"
+          ? -0.010
+          : 0;
+      const stateHeadRoll = state === "listening" ? 0.012 : 0;
+      const motionScale = r.reducedMotion ? 0.25 : 1;
+
+      return {
+        motionScale,
+        gazeYaw: r.currentYaw,
+        gazePitch: r.currentPitch,
+        breath: breathing * motionScale,
+        postureYaw: posture.yaw * motionScale,
+        postureRoll: posture.roll * motionScale,
+        headYaw: (micro.yaw + gesture.headTurn) * motionScale,
+        headPitch: (micro.pitch + gesture.headNod + attentionNod + stateHeadPitch) * motionScale,
+        headRoll: (gesture.headRoll + stateHeadRoll) * motionScale,
+        arm: gesture.arm * motionScale,
+        armSide: gesture.side,
+        speech,
       };
-      return this.output;
+    }
+
+    apply(deltaTime) {
+      const r = this.renderer;
+      const pose = this.sample(deltaTime);
+
+      if (r.procedural) {
+        r.applyMotion(r.head, {
+          rx: pose.gazePitch * 0.70 + pose.headPitch,
+          ry: pose.gazeYaw * 0.84 + pose.headYaw,
+          rz: pose.headRoll,
+        });
+        r.applyMotion(r.root, {
+          ry: pose.postureYaw + pose.headYaw * 0.10,
+          rz: pose.postureRoll * 0.45,
+          py: pose.breath * 0.46,
+        });
+        return;
+      }
+
+      const lookNode = r.rig.head || r.rig.neck || r.rig.chest || r.root;
+      r.applyMotion(lookNode, {
+        rx: pose.gazePitch * 0.80 + pose.headPitch,
+        ry: pose.gazeYaw * 0.92 + pose.headYaw,
+        rz: pose.headRoll,
+      });
+
+      if (r.rig.neck && r.rig.neck !== lookNode) {
+        r.applyMotion(r.rig.neck, {
+          rx: pose.gazePitch * 0.17 + pose.headPitch * 0.20,
+          ry: pose.gazeYaw * 0.22 + pose.headYaw * 0.20,
+          rz: pose.headRoll * 0.18,
+        });
+      }
+
+      const torso = r.rig.chest || r.rig.hips || r.root;
+      if (torso && torso !== lookNode) {
+        r.applyMotion(torso, {
+          rx: pose.breath * 0.42 + pose.speech * 0.008,
+          ry: pose.postureYaw + pose.headYaw * 0.28,
+          rz: pose.postureRoll + pose.headRoll * 0.32,
+          py: pose.breath * 0.22,
+        });
+      }
+
+      const arm = pose.arm;
+      const leftWeight = pose.armSide > 0 ? 1 : 0.58;
+      const rightWeight = pose.armSide < 0 ? 1 : 0.58;
+      r.applyMotion(r.leftShoulder, {
+        rz: arm * 0.42 * leftWeight,
+        rx: -arm * 0.20,
+      });
+      r.applyMotion(r.rightShoulder, {
+        rz: -arm * 0.42 * rightWeight,
+        rx: -arm * 0.20,
+      });
+      r.applyMotion(r.leftUpperArm, {
+        rz: arm * 0.66 * leftWeight,
+        rx: -arm * 0.30,
+      });
+      r.applyMotion(r.rightUpperArm, {
+        rz: -arm * 0.66 * rightWeight,
+        rx: -arm * 0.30,
+      });
+
+      const eyeYaw = clamp(pose.gazeYaw * 0.35, -0.10, 0.10);
+      const eyePitch = clamp(pose.gazePitch * 0.28, -0.07, 0.07);
+      if (r.eyeLeft && r.eyeLeft !== lookNode) {
+        r.applyMotion(r.eyeLeft, { rx: eyePitch, ry: eyeYaw });
+      }
+      if (r.eyeRight && r.eyeRight !== lookNode && r.eyeRight !== r.eyeLeft) {
+        r.applyMotion(r.eyeRight, { rx: eyePitch, ry: eyeYaw });
+      }
+
+      if (!r.rig.head && !r.rig.neck && !r.rig.chest) {
+        r.applyMotion(r.root, {
+          rx: pose.gazePitch * 0.12 + pose.headPitch * 0.22,
+          ry: pose.gazeYaw * 0.30 + pose.headYaw * 0.30 + pose.postureYaw,
+          rz: pose.headRoll * 0.28 + pose.postureRoll,
+          py: pose.breath * 0.18,
+        });
+      }
+    }
+
+    destroy() {
+      this.renderer = null;
     }
   }
 
-  function decorateRendererModule(module) {
-    if (!module || module[MODULE_FLAG] || !module.ThreeAvatarRenderer) return module;
-    const BaseRenderer = module.ThreeAvatarRenderer;
+  function engineFor(renderer) {
+    if (!renderer[ENGINE_KEY]) renderer[ENGINE_KEY] = new HumanBehaviorEngine(renderer);
+    return renderer[ENGINE_KEY];
+  }
 
-    class HumanizedThreeAvatarRenderer extends BaseRenderer {
-      constructor(...args) {
-        super(...args);
-        this.humanBehavior = new HumanBehaviorEngine({
-          reducedMotion: this.reducedMotion,
-        });
-        this.humanOutput = this.humanBehavior.snapshot();
+  function patchRenderer() {
+    const rendererAPI = window.__HERMES_AVATAR_RENDERER__;
+    const Renderer = rendererAPI?.ThreeAvatarRenderer;
+    if (!Renderer?.prototype) return false;
+    const prototype = Renderer.prototype;
+    if (prototype[PATCH_FLAG]) return true;
+
+    const originalMotion = prototype.applyCharacterMotion;
+    const originalDestroy = prototype.destroy;
+
+    Object.defineProperty(prototype, PATCH_FLAG, { value: true });
+    prototype.applyCharacterMotion = function humanCharacterMotion(_time, deltaTime) {
+      try {
+        engineFor(this).apply(deltaTime);
+      } catch (error) {
+        console.warn("[hermes-avatar] human behavior fallback", error);
+        return originalMotion.call(this, _time, deltaTime);
       }
+    };
 
-      applyCharacterMotion(time, deltaTime) {
-        this.humanOutput = this.humanBehavior.update({
-          time,
-          deltaTime,
-          signals: this.signals,
-          pointer: {
-            active: this.pointerActive,
-            yaw: this.pointerYaw,
-            pitch: this.pointerPitch,
-          },
-        });
-
-        super.applyCharacterMotion(time, deltaTime);
-        this.applyHumanMotion();
+    prototype.destroy = function humanBehaviorDestroy() {
+      try {
+        this[ENGINE_KEY]?.destroy?.();
+        this[ENGINE_KEY] = null;
+      } catch {
+        // Best-effort cleanup; renderer destruction must always continue.
       }
+      return originalDestroy.call(this);
+    };
 
-      applyHumanMotion() {
-        const human = this.humanOutput || this.humanBehavior.snapshot();
-        const head = this.rig?.head || this.head || this.rig?.neck || this.root;
-        const neck = this.rig?.neck || null;
-        const torso = this.rig?.chest || this.rig?.hips || this.root;
-
-        this.applyMotion(head, {
-          rx: human.gazePitch * 0.62 + human.headNod,
-          ry: human.gazeYaw * 0.72,
-          rz: human.weightShift * 0.28,
-        });
-
-        if (neck && neck !== head) {
-          this.applyMotion(neck, {
-            rx: human.gazePitch * 0.18 + human.headNod * 0.22,
-            ry: human.gazeYaw * 0.22,
-            rz: human.weightShift * 0.12,
-          });
-        }
-
-        if (torso && torso !== head) {
-          this.applyMotion(torso, {
-            rx: human.breath * 0.28,
-            ry: human.torsoYaw,
-            rz: human.weightShift,
-            px: human.weightShift * 0.45,
-            py: human.breath * 0.17,
-          });
-        }
-
-        const eyeRotation = {
-          rx: human.eyePitch * 0.34,
-          ry: human.eyeYaw * 0.42,
-        };
-        this.applyMotion(this.eyeLeft, eyeRotation);
-        this.applyMotion(this.eyeRight, eyeRotation);
-
-        const gesture = human.gesture * 0.11;
-        const leftEnergy = human.gestureSide > 0 ? gesture : gesture * 0.42;
-        const rightEnergy = human.gestureSide < 0 ? gesture : gesture * 0.42;
-        this.applyMotion(this.leftShoulder, {
-          rx: -leftEnergy * 0.24,
-          rz: leftEnergy * 0.34 + human.shoulderLift,
-        });
-        this.applyMotion(this.rightShoulder, {
-          rx: -rightEnergy * 0.24,
-          rz: -rightEnergy * 0.34 - human.shoulderLift,
-        });
-        this.applyMotion(this.leftUpperArm, {
-          rx: -leftEnergy * 0.42,
-          rz: leftEnergy * 0.62,
-        });
-        this.applyMotion(this.rightUpperArm, {
-          rx: -rightEnergy * 0.42,
-          rz: -rightEnergy * 0.62,
-        });
-      }
-
-      withHumanSignals(callback) {
-        const originalSignals = this.signals;
-        const human = this.humanOutput || this.humanBehavior.snapshot();
-        this.signals = {
-          ...originalSignals,
-          blink: human.blink,
-          smile: human.smile,
-          browLift: human.brow,
-        };
-        try {
-          return callback();
-        } finally {
-          this.signals = originalSignals;
-        }
-      }
-
-      applyGLBSignals() {
-        this.withHumanSignals(() => super.applyGLBSignals());
-        const squint = this.humanOutput?.squint || 0;
-        this.setMorph(["eyeSquintLeft", "EyeSquintLeft", "eyeSquint_L"], squint);
-        this.setMorph(["eyeSquintRight", "EyeSquintRight", "eyeSquint_R"], squint);
-      }
-
-      applyProceduralSignals() {
-        const human = this.humanOutput || this.humanBehavior.snapshot();
-        const yaw = this.currentYaw;
-        const pitch = this.currentPitch;
-        this.currentYaw += human.eyeYaw * 0.48;
-        this.currentPitch += human.eyePitch * 0.42;
-        try {
-          this.withHumanSignals(() => super.applyProceduralSignals());
-        } finally {
-          this.currentYaw = yaw;
-          this.currentPitch = pitch;
-        }
-      }
-
-      destroy() {
-        this.humanBehavior = null;
-        this.humanOutput = null;
-        super.destroy();
-      }
-    }
-
-    return Object.freeze({
-      ...module,
-      ThreeAvatarRenderer: HumanizedThreeAvatarRenderer,
-      HumanBehaviorEngine,
-      humanBehaviorVersion: VERSION,
-      [MODULE_FLAG]: true,
-    });
+    return true;
   }
 
   function installRendererHook() {
-    const key = "__HERMES_AVATAR_RENDERER__";
-    const existing = window[key];
-    if (existing) {
-      window[key] = decorateRendererModule(existing);
-      return;
-    }
+    if (patchRenderer()) return;
 
-    let assigned;
-    const descriptor = Object.getOwnPropertyDescriptor(window, key);
-    if (descriptor && descriptor.configurable === false) return;
-
-    Object.defineProperty(window, key, {
-      configurable: true,
-      enumerable: false,
-      get() {
-        return assigned;
-      },
-      set(value) {
-        assigned = decorateRendererModule(value);
-      },
+    const observer = new MutationObserver(records => {
+      for (const record of records) {
+        for (const node of record.addedNodes || []) {
+          if (!(node instanceof HTMLScriptElement)) continue;
+          if (!String(node.src || "").includes("three-avatar-renderer.js")) continue;
+          node.addEventListener("load", () => patchRenderer(), { once: true, capture: true });
+        }
+      }
     });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      attempts += 1;
+      if (patchRenderer() || attempts >= 600) {
+        window.clearInterval(timer);
+        observer.disconnect();
+      }
+    }, 50);
   }
 
-  window.__HERMES_HUMAN_BEHAVIOR__ = Object.freeze({
+  window[API_FLAG] = Object.freeze({
     HumanBehaviorEngine,
-    STATES,
-    VERSION,
-    decorateRendererModule,
+    AttentionController,
+    SaccadeController,
+    BreathController,
+    PostureController,
+    GestureController,
+    patchRenderer,
+    speechEnergy,
   });
 
   installRendererHook();

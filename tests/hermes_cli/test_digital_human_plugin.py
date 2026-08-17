@@ -61,22 +61,21 @@ def avatar_client(monkeypatch, tmp_path):
     return TestClient(app), home
 
 
-def test_manifest_points_to_v4_runtime_assets():
+def test_manifest_points_to_human_behavior_runtime_assets():
     manifest = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
 
     assert manifest["name"] == "hermes-avatar"
-    assert manifest["version"] == "0.8.1"
+    assert manifest["version"] == "0.8.0
     assert manifest["tab"]["path"] == "/digital-human"
-    assert manifest["entry"] == "dist/digital-human-entry.js"
+    assert manifest["entry"] == "dist/human-entry.js"
     assert manifest["css"] == "dist/avatar-v4.css"
     assert manifest["api"] == "plugin_api_entry.py"
 
     for relative_path in (manifest["entry"], manifest["css"], manifest["api"]):
         assert (_PLUGIN_DIR / relative_path).is_file(), relative_path
 
-    assert (_PLUGIN_DIR / "plugin_api.py").is_file()
+    assert (_PLUGIN_DIR / "dist" / "human-behavior-engine.js").is_file()
     assert (_PLUGIN_DIR / "dist" / "female-voice-entry.js").is_file()
-    assert (_PLUGIN_DIR / "dist" / "deterministic-avatar-policy.js").is_file()
     assert (_PLUGIN_DIR / "dist" / "avatar-v4.js").is_file()
     assert (_PLUGIN_DIR / "dist" / "realistic.css").is_file()
     assert (_PLUGIN_DIR / "dist" / "three-avatar-renderer.js").is_file()
@@ -100,6 +99,40 @@ def test_api_entry_raises_production_upload_limit_without_changing_core(monkeypa
     assert module._base._MAX_AVATAR_BYTES == 64 * 1024 * 1024
     assert module._base._AVATAR_STORAGE.max_bytes == 64 * 1024 * 1024
     assert module.router is module._base.router
+
+
+def test_human_entry_boots_behavior_before_voice_runtime():
+    source = (_PLUGIN_DIR / "dist" / "human-entry.js").read_text(encoding="utf-8")
+
+    assert "human-behavior-engine.js" in source
+    assert "female-voice-entry.js" in source
+    assert "await loadScript(BEHAVIOR_ENTRY)" in source
+    assert "await loadScript(VOICE_ENTRY)" in source
+    assert "continuing with base motion" in source
+
+
+def test_human_behavior_engine_separates_motion_responsibilities():
+    source = (_PLUGIN_DIR / "dist" / "human-behavior-engine.js").read_text(
+        encoding="utf-8"
+    )
+
+    for controller in (
+        "AttentionController",
+        "SaccadeController",
+        "BreathController",
+        "PostureController",
+        "GestureController",
+        "HumanBehaviorEngine",
+    ):
+        assert f"class {controller}" in source
+
+    assert "patchRenderer" in source
+    assert "human behavior fallback" in source
+    assert 'state === "listening"' in source
+    assert 'state === "thinking"' in source
+    assert 'state === "speaking"' in source
+    assert "pointerActive" in source
+    assert "prefers-reduced-motion" not in source  # renderer remains accessibility owner
 
 
 def test_female_voice_entry_prefers_natural_female_voices_and_loads_avatar():

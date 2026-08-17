@@ -4,6 +4,8 @@
   const ENTRY_SCRIPT_URL = document.currentScript?.src || "";
   const SDK = window.__HERMES_PLUGIN_SDK__;
   const REGISTRY = window.__HERMES_PLUGINS__;
+  const SCRIPT_TIMEOUT_MS = 12000;
+  const AVATAR_READY_FLAG = "__HERMES_AVATAR_ENTRY_LOADED__";
 
   if (!SDK || !REGISTRY) {
     console.error("[hermes-avatar] Hermes plugin SDK/registry is unavailable.");
@@ -36,8 +38,9 @@
   }
 
   // The host validates registration immediately after the entry script loads.
-  // Keep that contract synchronous; the base entry will replace this bootstrap
-  // page after the policy layer has been installed.
+  // Keep that contract synchronous. The full avatar page is loaded directly by
+  // this composition root so optional voice/behavior preloads can never leave
+  // the user trapped on the bootstrap screen.
   REGISTRY.register("hermes-avatar", DigitalHumanBootstrapPage);
 
   function assetUrl(fileName) {
@@ -60,14 +63,37 @@
 
   function loadScript(src) {
     return new Promise((resolve, reject) => {
-      const existing = Array.from(document.scripts).find(script => script.src === src);
-      if (existing?.dataset?.hermesLoaded === "1") {
+      let settled = false;
+      let timer = null;
+
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (timer !== null) window.clearTimeout(timer);
         resolve();
+      };
+
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        if (timer !== null) window.clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(`Unable to load ${src}`));
+      };
+
+      timer = window.setTimeout(() => {
+        fail(new Error(`Timed out loading ${src} after ${SCRIPT_TIMEOUT_MS} ms`));
+      }, SCRIPT_TIMEOUT_MS);
+
+      const existing = Array.from(document.scripts).find(script => script.src === src);
+      if (existing?.dataset?.hermesLoaded === "1"
+        || existing?.readyState === "loaded"
+        || existing?.readyState === "complete") {
+        finish();
         return;
       }
       if (existing) {
-        existing.addEventListener("load", () => resolve(), { once: true });
-        existing.addEventListener("error", () => reject(new Error(`Unable to load ${src}`)), { once: true });
+        existing.addEventListener("load", finish, { once: true });
+        existing.addEventListener("error", fail, { once: true });
         return;
       }
 
@@ -76,24 +102,36 @@
       script.async = false;
       script.onload = () => {
         script.dataset.hermesLoaded = "1";
-        resolve();
+        finish();
       };
-      script.onerror = () => reject(new Error(`Unable to load ${src}`));
+      script.onerror = () => {
+        script.dataset.hermesLoaded = "0";
+        fail(new Error(`Unable to load ${src}`));
+      };
       document.body.appendChild(script);
     });
   }
 
   const policyEntry = assetUrl("deterministic-avatar-policy.js");
-  const baseEntry = assetUrl("female-voice-entry.js");
+  const voiceEntry = assetUrl("female-voice-entry.js");
+  const avatarEntry = assetUrl("avatar-v4.js");
 
   loadScript(policyEntry)
     .catch(error => {
-      // The policy layer is fail-open so the existing Digital Human remains
-      // usable. The error is visible in diagnostics and never silently changes
-      // animation selection behavior.
+      // Deterministic policy is optional at bootstrap time. The avatar must
+      // remain usable even if this enhancement fails to load.
       console.error("[hermes-avatar] deterministic animation policy failed", error);
     })
-    .then(() => loadScript(baseEntry))
+    .then(() => loadScript(voiceEntry).catch(error => {
+      // Voice is also fail-open. Text/avatar interaction must not be blocked by
+      // browser voice support or a transient sidecar loading failure.
+      console.error("[hermes-avatar] female voice runtime failed", error);
+    }))
+    .then(() => loadScript(avatarEntry))
+    .then(() => {
+      // female-voice-entry uses this flag to avoid a second avatar bootstrap.
+      window[AVATAR_READY_FLAG] = true;
+    })
     .catch(error => {
       console.error("[hermes-avatar] base Digital Human entry failed", error);
       const message = error instanceof Error ? error.message : String(error || "Unknown error");

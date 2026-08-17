@@ -45,6 +45,37 @@
       if (this.remaining > 0) return false;
       this.remaining = randomBetween(minSeconds, maxSeconds);
       return true;
+  const STATES = Object.freeze({
+    IDLE: "idle",
+    LISTENING: "listening",
+    THINKING: "thinking",
+    SPEAKING: "speaking",
+    ERROR: "error",
+  });
+  const VERSION = "1.0.0";
+  const MODULE_FLAG = "__humanBehaviorV1";
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function lerp(current, target, alpha) {
+    return current + (target - current) * clamp(alpha, 0, 1);
+  }
+
+  class SeededNoise {
+    constructor(seed = Math.random() * 1e9) {
+      this.seed = seed % 2147483647;
+      if (this.seed <= 0) this.seed += 2147483646;
+    }
+
+    next() {
+      this.seed = this.seed * 16807 % 2147483647;
+      return (this.seed - 1) / 2147483646;
+    }
+
+    range(min, max) {
+      return min + (max - min) * this.next();
     }
   }
 

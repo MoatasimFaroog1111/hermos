@@ -65,11 +65,11 @@ def test_manifest_points_to_human_behavior_runtime_assets():
     manifest = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
 
     assert manifest["name"] == "hermes-avatar"
-    assert manifest["version"] == "0.8.0"
+    assert manifest["version"] == "0.8.0
     assert manifest["tab"]["path"] == "/digital-human"
     assert manifest["entry"] == "dist/human-entry.js"
     assert manifest["css"] == "dist/avatar-v4.css"
-    assert manifest["api"] == "plugin_api.py"
+    assert manifest["api"] == "plugin_api_entry.py"
 
     for relative_path in (manifest["entry"], manifest["css"], manifest["api"]):
         assert (_PLUGIN_DIR / relative_path).is_file(), relative_path
@@ -79,6 +79,26 @@ def test_manifest_points_to_human_behavior_runtime_assets():
     assert (_PLUGIN_DIR / "dist" / "avatar-v4.js").is_file()
     assert (_PLUGIN_DIR / "dist" / "realistic.css").is_file()
     assert (_PLUGIN_DIR / "dist" / "three-avatar-renderer.js").is_file()
+    assert (_PLUGIN_DIR / "dist" / "human-behavior-engine.js").is_file()
+
+
+def test_api_entry_raises_production_upload_limit_without_changing_core(monkeypatch):
+    monkeypatch.setenv("HERMES_AVATAR_MAX_UPLOAD_MB", "64")
+    module_name = "hermes_avatar_dashboard_plugin_api_entry_test"
+    spec = importlib.util.spec_from_file_location(
+        module_name,
+        _PLUGIN_DIR / "plugin_api_entry.py",
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+
+    assert module._MAX_BYTES == 64 * 1024 * 1024
+    assert module._base._MAX_AVATAR_BYTES == 64 * 1024 * 1024
+    assert module._base._AVATAR_STORAGE.max_bytes == 64 * 1024 * 1024
+    assert module.router is module._base.router
 
 
 def test_human_entry_boots_behavior_before_voice_runtime():
@@ -125,6 +145,7 @@ def test_female_voice_entry_prefers_natural_female_voices_and_loads_avatar():
     assert "natural|neural|online|premium|enhanced|studio|wavenet" in source
     assert "zira|samantha|victoria" in source
     assert "/dashboard-plugins/hermes-avatar/dist/avatar-v4.js" in source
+    assert "/dashboard-plugins/hermes-avatar/dist/human-behavior-engine.js" in source
 
 
 def test_v4_styles_preserve_base_ui_and_wrap_avatar_controls():

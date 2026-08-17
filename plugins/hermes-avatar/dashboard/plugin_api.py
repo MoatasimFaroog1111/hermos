@@ -8,8 +8,10 @@ tool-disabled in-process Hermes turn when the API server is not running.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import os
+import sys
 import tempfile
 import threading
 import urllib.error
@@ -18,7 +20,7 @@ import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import AsyncIterable, Deque
+from typing import AsyncIterable, Deque, Protocol
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -35,6 +37,50 @@ _GLB_MAGIC = b"glTF"
 _DIRECT_AGENT_LOCK = threading.Lock()
 
 
+class CharacterProvider(Protocol):
+    """Narrow provider contract consumed by the Digital Human API layer."""
+
+    name: str
+
+    def configured(self) -> bool: ...
+
+    def health(self) -> dict[str, object]: ...
+
+    def get_task(self, task_id: str) -> dict[str, object]: ...
+
+    def submit_prerig_check(self, task_id: str) -> dict[str, object]: ...
+
+    def submit_rig(
+        self,
+        task_id: str,
+        *,
+        out_format: str,
+        rig_type: str,
+        spec: str,
+        model_version: str,
+    ) -> dict[str, object]: ...
+
+
+def _load_tripo_provider_module():
+    """Load the sibling provider without relying on process working directory."""
+    module_name = "hermes_avatar_tripo_provider"
+    module = sys.modules.get(module_name)
+    if module is None:
+        module_path = Path(__file__).with_name("tripo_provider.py")
+        spec = importlib.util.spec_from_file_location(module_name, module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Unable to load Tripo character provider")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+    return module
+
+
+_TRIPO_MODULE = _load_tripo_provider_module()
+TripoCharacterProvider = _TRIPO_MODULE.TripoCharacterProvider
+TripoProviderError = _TRIPO_MODULE.TripoProviderError
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=_MAX_MESSAGE_CHARS)
     conversation_id: str = Field(default="digital-human", min_length=1, max_length=128)
@@ -44,6 +90,16 @@ class ChatResponse(BaseModel):
     reply: str
     conversation_id: str
     transport: str
+
+
+class TripoRigRequest(BaseModel):
+    """Paid rig submission contract; explicit confirmation is mandatory."""
+
+    confirm_cost: bool = False
+    out_format: str = Field(default="glb", max_length=8)
+    rig_type: str = Field(default="biped", max_length=32)
+    spec: str = Field(default="tripo", max_length=16)
+    model_version: str = Field(default="v1.0-20240301", max_length=40)
 
 
 @dataclass
@@ -168,6 +224,7 @@ class AvatarModelStorage:
 
 _CONVERSATIONS: dict[str, ConversationMemory] = {}
 _AVATAR_STORAGE = AvatarModelStorage()
+_TRIPO_PROVIDER: CharacterProvider = TripoCharacterProvider()
 
 
 def _api_server_url() -> str:
@@ -232,6 +289,17 @@ def _health_payload() -> dict:
         **_avatar_descriptor(),
         "avatar_upload_supported": True,
         "avatar_upload_max_bytes": _MAX_AVATAR_BYTES,
+        "character_providers": {
+            "tripo": {
+                "configured": _TRIPO_PROVIDER.configured(),
+                "health_endpoint": "/api/plugins/hermes-avatar/providers/tripo/health",
+                "task_endpoint": "/api/plugins/hermes-avatar/providers/tripo/tasks/{task_id}",
+                "prerig_endpoint": "/api/plugins/hermes-avatar/providers/tripo/tasks/{task_id}/prerig-check",
+                "rig_endpoint": "/api/plugins/hermes-avatar/providers/tripo/tasks/{task_id}/rig",
+                "rigging_requires_cost_confirmation": True,
+                "credentials": "server-side-only",
+            }
+        },
         "facial_channels": [
             "blink",
             "jaw",
@@ -257,6 +325,29 @@ def _request_content_length(request: Request) -> int | None:
     if value < 0:
         raise HTTPException(status_code=400, detail="Invalid Content-Length")
     return value
+
+
+def _tripo_http_exception(exc: Exception) -> HTTPException:
+    """Translate provider failures without leaking provider credentials."""
+    if isinstance(exc, ValueError):
+        return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, TripoProviderError):
+        provider_status = getattr(exc, "status_code", None)
+        if provider_status == 404:
+            status_code = 404
+        elif provider_status == 429:
+            status_code = 429
+        elif provider_status is None:
+            status_code = 503
+        else:
+            status_code = 502
+        trace_id = getattr(exc, "trace_id", "")
+        suffix = f" [trace {trace_id}]" if trace_id else ""
+        return HTTPException(status_code=status_code, detail=f"{exc}{suffix}")
+    return HTTPException(
+        status_code=503,
+        detail=f"Tripo operation failed safely ({type(exc).__name__})",
+    )
 
 
 def _extract_responses_text(payload: dict) -> str:
@@ -327,6 +418,57 @@ def _direct_hermes_turn(message: str, conversation_id: str) -> str:
 @router.get("/health")
 async def health():
     return _health_payload()
+
+
+@router.get("/providers/tripo/health")
+async def tripo_provider_health():
+    """Check the configured Tripo credential without creating a generation task."""
+    try:
+        return await asyncio.to_thread(_TRIPO_PROVIDER.health)
+    except Exception as exc:
+        raise _tripo_http_exception(exc) from exc
+
+
+@router.get("/providers/tripo/tasks/{task_id}")
+async def tripo_task_status(task_id: str):
+    """Inspect one Tripo task without exposing signed output URLs."""
+    try:
+        return await asyncio.to_thread(_TRIPO_PROVIDER.get_task, task_id)
+    except Exception as exc:
+        raise _tripo_http_exception(exc) from exc
+
+
+@router.post("/providers/tripo/tasks/{task_id}/prerig-check")
+async def tripo_prerig_check(task_id: str):
+    """Submit the free Tripo pre-rig suitability check for a model task."""
+    try:
+        return await asyncio.to_thread(_TRIPO_PROVIDER.submit_prerig_check, task_id)
+    except Exception as exc:
+        raise _tripo_http_exception(exc) from exc
+
+
+@router.post("/providers/tripo/tasks/{task_id}/rig")
+async def tripo_rig(task_id: str, body: TripoRigRequest):
+    """Submit paid rigging only after the caller explicitly confirms provider cost."""
+    if not body.confirm_cost:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Tripo rigging is a paid provider operation. "
+                "Set confirm_cost=true to submit it."
+            ),
+        )
+    try:
+        return await asyncio.to_thread(
+            _TRIPO_PROVIDER.submit_rig,
+            task_id,
+            out_format=body.out_format,
+            rig_type=body.rig_type,
+            spec=body.spec,
+            model_version=body.model_version,
+        )
+    except Exception as exc:
+        raise _tripo_http_exception(exc) from exc
 
 
 @router.put("/avatar-model")

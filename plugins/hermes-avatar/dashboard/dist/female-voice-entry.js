@@ -1,10 +1,132 @@
 (function () {
   "use strict";
 
-  const AVATAR_ENTRY = "/dashboard-plugins/hermes-avatar/dist/avatar-v4.js";
+  const ENTRY_SCRIPT_URL = document.currentScript?.src || "";
   const PATCH_FLAG = "__HERMES_FEMALE_VOICE_PATCHED__";
   const CALL_UX_FLAG = "__HERMES_VOICE_CALL_UX__";
   const CALL_AUTO_REPLY_FLAG = "__HERMES_VOICE_CALL_AUTO_REPLY__";
+  const AVATAR_READY_FLAG = "__HERMES_AVATAR_ENTRY_LOADED__";
+  const SCRIPT_TIMEOUT_MS = 15000;
+  const SDK = window.__HERMES_PLUGIN_SDK__;
+  const REGISTRY = window.__HERMES_PLUGINS__;
+  let runtimeFailure = null;
+
+  if (!SDK || !REGISTRY) {
+    console.error("[hermes-avatar] Hermes plugin SDK/registry is unavailable.");
+    return;
+  }
+
+  const h = SDK.React.createElement;
+
+  function DigitalHumanBootstrapPage() {
+    return h(
+      "main",
+      {
+        className: "dh2-page",
+        role: "status",
+        "aria-live": "polite",
+        "aria-busy": "true",
+      },
+      h(
+        "header",
+        { className: "dh2-header" },
+        h(
+          "div",
+          null,
+          h("div", { className: "dh2-kicker" }, "HERMES // DIGITAL HUMAN"),
+          h("h1", null, "Digital Human"),
+          h("p", null, "Loading avatar, voice and behavior runtime..."),
+        ),
+      ),
+    );
+  }
+
+  function DigitalHumanLoadErrorPage() {
+    const failure = runtimeFailure || {};
+    return h(
+      "main",
+      {
+        className: "dh2-page",
+        role: "alert",
+        "aria-live": "assertive",
+        "aria-busy": "false",
+      },
+      h(
+        "header",
+        { className: "dh2-header" },
+        h(
+          "div",
+          null,
+          h("div", { className: "dh2-kicker" }, "HERMES // DIGITAL HUMAN"),
+          h("h1", null, "Digital Human"),
+          h("p", null, "The interactive avatar runtime could not be started."),
+          h(
+            "p",
+            { className: "dh2-error", "data-runtime-stage": failure.stage || "runtime" },
+            `${failure.stage || "Runtime"}: ${failure.message || "Unknown loading error"}`,
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              className: "dh2-button",
+              onClick: () => window.location.reload(),
+            },
+            "RETRY DIGITAL HUMAN",
+          ),
+        ),
+      ),
+    );
+  }
+
+  function showRuntimeLoadError(stage, error) {
+    runtimeFailure = {
+      stage,
+      message: error instanceof Error ? error.message : String(error || "Load failed"),
+    };
+    console.error(`[hermes-avatar] ${stage} failed`, error);
+    REGISTRY.register("hermes-avatar", DigitalHumanLoadErrorPage);
+  }
+
+  // The dashboard validates plugin registration in the first microtask after
+  // this entry script loads. Register a lightweight page synchronously, then
+  // avatar-v4.js replaces it with the full DigitalHumanPage when ready.
+  REGISTRY.register("hermes-avatar", DigitalHumanBootstrapPage);
+
+  function normalizeBasePath(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const withLead = raw.startsWith("/") ? raw : `/${raw}`;
+    return withLead.replace(/\/+$/, "");
+  }
+
+  function pluginAssetUrl(fileName) {
+    if (ENTRY_SCRIPT_URL) {
+      try {
+        const entry = new URL(ENTRY_SCRIPT_URL, window.location.href);
+        const resolved = new URL(fileName, entry);
+        // Preserve the host loader's plugin-version revision on every child
+        // asset. Otherwise a fresh entry can execute stale avatar/renderer/CSS
+        // from an earlier Railway/browser/CDN cache generation.
+        if (entry.search) resolved.search = entry.search;
+        return resolved.toString();
+      } catch {
+        // Fall through to the injected dashboard base path.
+      }
+    }
+
+    const basePath = normalizeBasePath(window.__HERMES_BASE_PATH__);
+    return `${basePath}/dashboard-plugins/hermes-avatar/dist/${fileName}`;
+  }
+
+  const AVATAR_ENTRY = pluginAssetUrl("avatar-v4.js");
+  const HUMAN_BEHAVIOR_ENTRY = pluginAssetUrl("human-behavior-engine.js");
+  const RENDERER_ENTRY = pluginAssetUrl("three-avatar-renderer.js");
+  const REALISTIC_STYLE = pluginAssetUrl("realistic.css");
+
+  // Legacy root-path examples retained for smoke-test/documentation compatibility:
+  // /dashboard-plugins/hermes-avatar/dist/avatar-v4.js
+  // /dashboard-plugins/hermes-avatar/dist/human-behavior-engine.js
 
   function normalize(value) {
     return String(value || "").trim().toLowerCase();
@@ -125,13 +247,8 @@
         return;
       }
 
-      // Ending an active listening session should happen immediately.
       if (callButton.classList.contains("is-live")) return;
 
-      // A voice call is a voice-first interaction. If the user previously muted
-      // TTS, enable it first and replay the call click after React has committed
-      // the new state. This guarantees the response to this recorded message is
-      // spoken automatically instead of silently falling back to text.
       if (voiceOutputIsMuted(voiceButton)) {
         event.preventDefault();
         event.stopPropagation();
@@ -161,14 +278,111 @@
     refreshVoiceCallButton();
   }
 
-  function loadAvatarEntry() {
-    if (document.querySelector(`script[src^="${AVATAR_ENTRY}"]`)) return;
+  function ensureStylesheet(href) {
+    const exists = Array.from(document.styleSheets || []).some(sheet => sheet.href === href)
+      || Boolean(document.querySelector(`link[href="${href}"]`));
+    if (exists) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = href;
+    link.setAttribute("data-hermes-avatar-base-style", "1");
+    document.head.appendChild(link);
+  }
+
+  function findScript(src) {
+    return Array.from(document.scripts).find(script => script.src === src) || null;
+  }
+
+  function appendScript(src, ready, onLoad, onError, timeoutMs = SCRIPT_TIMEOUT_MS) {
+    if (ready()) {
+      onLoad();
+      return;
+    }
+
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      onError(new Error(`Timed out loading ${src} after ${timeoutMs} ms`));
+    }, timeoutMs);
+
+    const loaded = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      onLoad();
+    };
+    const failed = error => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      onError(error instanceof Error ? error : new Error(`Unable to load ${src}`));
+    };
+
+    const existing = findScript(src);
+    if (existing) {
+      if (existing.dataset.hermesLoaded === "1") {
+        window.clearTimeout(timer);
+        settled = true;
+        if (ready()) onLoad();
+        else onError(new Error(`Loaded script did not expose its runtime: ${src}`));
+        return;
+      }
+      existing.addEventListener("load", loaded, { once: true });
+      existing.addEventListener("error", failed, { once: true });
+      return;
+    }
+
     const script = document.createElement("script");
-    script.src = AVATAR_ENTRY;
+    script.src = src;
     script.async = true;
-    script.onload = refreshVoiceCallButton;
-    script.onerror = () => console.error("[hermes-avatar] unable to load avatar runtime");
+    script.onload = () => {
+      script.dataset.hermesLoaded = "1";
+      loaded();
+    };
+    script.onerror = event => {
+      script.dataset.hermesLoaded = "0";
+      failed(event);
+    };
     document.body.appendChild(script);
+  }
+
+  function loadAvatarEntry() {
+    const startAvatar = () => {
+      appendScript(
+        AVATAR_ENTRY,
+        () => Boolean(window[AVATAR_READY_FLAG]),
+        () => {
+          window[AVATAR_READY_FLAG] = true;
+          refreshVoiceCallButton();
+        },
+        error => showRuntimeLoadError("Avatar runtime", error),
+      );
+    };
+
+    const startRenderer = () => {
+      appendScript(
+        RENDERER_ENTRY,
+        () => Boolean(window.__HERMES_AVATAR_RENDERER__?.ThreeAvatarRenderer),
+        startAvatar,
+        error => {
+          console.warn("[hermes-avatar] renderer preload failed; avatar runtime will retry", error);
+          startAvatar();
+        },
+      );
+    };
+
+    ensureStylesheet(REALISTIC_STYLE);
+
+    appendScript(
+      HUMAN_BEHAVIOR_ENTRY,
+      () => Boolean(window.__HERMES_HUMAN_BEHAVIOR__),
+      startRenderer,
+      error => {
+        console.warn("[hermes-avatar] human behavior engine unavailable; continuing with base motion", error);
+        startRenderer();
+      },
+    );
   }
 
   installFemaleVoicePatch();

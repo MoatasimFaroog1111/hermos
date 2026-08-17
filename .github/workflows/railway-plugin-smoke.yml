@@ -8,6 +8,7 @@ on:
       - "web/src/plugins/**"
       - "web/src/pages/PluginsPage.tsx"
       - "hermes_cli/web_server.py"
+      - "hermes_cli/dashboard_auth/**"
       - "docker/**"
       - ".dockerignore"
       - ".github/workflows/railway-plugin-smoke.yml"
@@ -25,49 +26,46 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Probe deployed bundled plugin assets
+      - name: Probe deployed Digital Human discovery contract
         env:
           BASE_URL: https://brilliant-expression-production-c3d8.up.railway.app
         shell: bash
         run: |
           set -euo pipefail
 
-          manifest_url="${BASE_URL}/dashboard-plugins/hermes-avatar/manifest.json?railway_smoke=${GITHUB_SHA}"
+          discovery_url="${BASE_URL}/api/dashboard/plugins?railway_smoke=${GITHUB_SHA}"
+          plugins_page_url="${BASE_URL}/plugins?railway_smoke=${GITHUB_SHA}"
           entry_url="${BASE_URL}/dashboard-plugins/hermes-avatar/dist/digital-human-entry.js?railway_smoke=${GITHUB_SHA}"
-          css_url="${BASE_URL}/dashboard-plugins/hermes-avatar/dist/avatar-v4.css?railway_smoke=${GITHUB_SHA}"
 
           for attempt in $(seq 1 36); do
-            manifest_code="$(curl -sS --max-time 15 -o /tmp/hermes-avatar-manifest.json -w '%{http_code}' "${manifest_url}" || true)"
-            entry_code="$(curl -sS --max-time 15 -o /tmp/digital-human-entry.js -w '%{http_code}' "${entry_url}" || true)"
-            css_code="$(curl -sS --max-time 15 -o /tmp/avatar-v4.css -w '%{http_code}' "${css_url}" || true)"
+            discovery_code="$(curl -sS --max-time 15 -o /tmp/dashboard-plugins.json -w '%{http_code}' "${discovery_url}" || true)"
 
-            if [[ "${manifest_code}" == "200" && "${entry_code}" == "200" && "${css_code}" == "200" ]]; then
-              python - <<'PY'
-          import json
-          from pathlib import Path
+            if [[ "${discovery_code}" == "200" ]] && \
+               jq -e '.[] | select(.name == "hermes-avatar" and .tab.path == "/digital-human" and .entry == "dist/digital-human-entry.js" and .version == "0.8.3" and .source == "bundled")' \
+                 /tmp/dashboard-plugins.json >/dev/null; then
+              page_code="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "${plugins_page_url}" || true)"
+              entry_code="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "${entry_url}" || true)"
 
-          manifest = json.loads(Path('/tmp/hermes-avatar-manifest.json').read_text(encoding='utf-8'))
-          assert manifest['name'] == 'hermes-avatar'
-          assert manifest['tab']['path'] == '/digital-human'
-          assert manifest['entry'] == 'dist/digital-human-entry.js'
-          assert manifest['api'] == 'plugin_api_entry.py'
-
-          entry = Path('/tmp/digital-human-entry.js').read_text(encoding='utf-8')
-          assert 'REGISTRY.register("hermes-avatar", DigitalHumanBootstrapPage);' in entry
-          assert 'female-voice-entry.js' in entry
-
-          css = Path('/tmp/avatar-v4.css').read_text(encoding='utf-8')
-          assert '.dh2-page' in css
-          PY
-              echo "Railway Digital Human static pipeline is live (attempt ${attempt})."
-              exit 0
+              # Public Railway binds redirect unauthenticated HTML/static requests
+              # to /login. Once the SPA is authenticated, the same-origin cookie
+              # accompanies plugin script requests. A 200 or auth redirect here is
+              # healthy; /api/dashboard/plugins above is the authoritative public
+              # discovery check and must contain hermes-avatar.
+              if [[ "${page_code}" =~ ^(200|302|303|307|308)$ ]] && \
+                 [[ "${entry_code}" =~ ^(200|302|303|307|308)$ ]]; then
+                echo "Digital Human discovery is live (attempt ${attempt}); page=${page_code} entry=${entry_code}."
+                jq -c '.[] | select(.name == "hermes-avatar")' /tmp/dashboard-plugins.json
+                exit 0
+              fi
             fi
 
-            echo "attempt=${attempt} manifest=${manifest_code} entry=${entry_code} css=${css_code}"
+            echo "attempt=${attempt} discovery=${discovery_code}"
+            if [[ -s /tmp/dashboard-plugins.json ]]; then
+              cat /tmp/dashboard-plugins.json || true
+            fi
             sleep 10
           done
 
-          echo "Railway Digital Human smoke probe failed." >&2
-          echo "manifest response:" >&2
-          cat /tmp/hermes-avatar-manifest.json >&2 2>/dev/null || true
+          echo "Railway Digital Human discovery smoke probe failed." >&2
+          cat /tmp/dashboard-plugins.json >&2 2>/dev/null || true
           exit 1

@@ -5,6 +5,7 @@ import pytest
 
 from hermes_cli.required_dashboard_plugins import (
     normalize_required_dashboard_plugins,
+    quarantine_required_user_plugin_shadows,
     required_plugin_names,
     validate_bundled_dashboard_plugin,
 )
@@ -59,6 +60,42 @@ def test_validate_required_dashboard_plugin_checks_declared_assets(tmp_path):
     (dist / "entry.js").unlink()
     with pytest.raises(FileNotFoundError):
         validate_bundled_dashboard_plugin(tmp_path, "hermes-avatar")
+
+
+def test_required_bundled_plugin_quarantines_only_same_name_user_shadow(tmp_path):
+    plugins_root = tmp_path / "plugins"
+    shadow = plugins_root / "hermes-avatar"
+    unrelated = plugins_root / "custom-user-plugin"
+    shadow.mkdir(parents=True)
+    unrelated.mkdir(parents=True)
+    (shadow / "marker.txt").write_text("stale user copy", encoding="utf-8")
+    (unrelated / "marker.txt").write_text("keep me", encoding="utf-8")
+
+    moved = quarantine_required_user_plugin_shadows(tmp_path, ["hermes-avatar"])
+
+    assert len(moved) == 1
+    source, destination = moved[0]
+    assert source == shadow
+    assert not shadow.exists()
+    assert destination == tmp_path / "plugin-shadow-backups" / "hermes-avatar"
+    assert (destination / "marker.txt").read_text(encoding="utf-8") == "stale user copy"
+    assert (unrelated / "marker.txt").read_text(encoding="utf-8") == "keep me"
+
+
+def test_shadow_quarantine_never_overwrites_existing_backup(tmp_path):
+    plugins_root = tmp_path / "plugins"
+    shadow = plugins_root / "hermes-avatar"
+    existing_backup = tmp_path / "plugin-shadow-backups" / "hermes-avatar"
+    shadow.mkdir(parents=True)
+    existing_backup.mkdir(parents=True)
+    (shadow / "marker.txt").write_text("new shadow", encoding="utf-8")
+    (existing_backup / "marker.txt").write_text("old backup", encoding="utf-8")
+
+    moved = quarantine_required_user_plugin_shadows(tmp_path, ["hermes-avatar"])
+
+    assert moved[0][1] == tmp_path / "plugin-shadow-backups" / "hermes-avatar.1"
+    assert (existing_backup / "marker.txt").read_text(encoding="utf-8") == "old backup"
+    assert (moved[0][1] / "marker.txt").read_text(encoding="utf-8") == "new shadow"
 
 
 def test_railway_wires_digital_human_as_required_after_s6_bootstrap():

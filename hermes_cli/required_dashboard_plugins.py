@@ -3,8 +3,9 @@
 This module is intentionally small and deployment-agnostic. A launcher can
 set ``HERMES_REQUIRED_BUNDLED_DASHBOARD_PLUGINS`` to a comma-separated list of
 application-owned bundled dashboard plugins that must remain available. The
-preflight validates their manifest assets and removes stale persisted
-hide/disable state before the dashboard process starts.
+preflight validates their manifest assets, removes stale persisted hide/disable
+state, and prevents stale user-volume copies from shadowing a required bundled
+plugin before the dashboard process starts.
 """
 from __future__ import annotations
 
@@ -14,10 +15,11 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
-from hermes_cli.config import load_config, save_config
+from hermes_cli.config import get_process_hermes_home, load_config, save_config
 from hermes_cli.plugins import get_bundled_plugins_dir
 
 _REQUIRED_ENV = "HERMES_REQUIRED_BUNDLED_DASHBOARD_PLUGINS"
+_SHADOW_BACKUP_DIR = "plugin-shadow-backups"
 
 
 def required_plugin_names(raw: str | None = None) -> tuple[str, ...]:
@@ -104,6 +106,44 @@ def normalize_required_dashboard_plugins(config: dict, names: Iterable[str]) -> 
     return changed
 
 
+def quarantine_required_user_plugin_shadows(
+    hermes_home: Path,
+    names: Iterable[str],
+) -> tuple[tuple[Path, Path], ...]:
+    """Move same-name user copies aside so required bundled plugins win discovery.
+
+    Dashboard discovery intentionally scans ``$HERMES_HOME/plugins`` before the
+    bundled plugin tree so normal user plugins can override bundled plugins. A
+    managed deployment can opt specific application-owned names into the
+    required-bundled contract. For those names only, a stale persistent user
+    copy must not claim ``seen_names`` before the bundled manifest is scanned.
+
+    The conflicting copy is never deleted. It is atomically renamed on the same
+    durable volume into ``$HERMES_HOME/plugin-shadow-backups``. Existing backups
+    receive a numeric suffix so repeated/manual restores cannot overwrite data.
+    """
+    plugins_root = Path(hermes_home) / "plugins"
+    backup_root = Path(hermes_home) / _SHADOW_BACKUP_DIR
+    moved: list[tuple[Path, Path]] = []
+
+    for name in names:
+        source = plugins_root / name
+        if not source.exists() and not source.is_symlink():
+            continue
+
+        backup_root.mkdir(parents=True, exist_ok=True)
+        destination = backup_root / name
+        suffix = 0
+        while destination.exists() or destination.is_symlink():
+            suffix += 1
+            destination = backup_root / f"{name}.{suffix}"
+
+        source.rename(destination)
+        moved.append((source, destination))
+
+    return tuple(moved)
+
+
 def run_preflight(raw_names: str | None = None) -> tuple[tuple[str, ...], bool]:
     names = required_plugin_names(raw_names)
     if not names:
@@ -113,13 +153,24 @@ def run_preflight(raw_names: str | None = None) -> tuple[tuple[str, ...], bool]:
     for name in names:
         validate_bundled_dashboard_plugin(bundled_root, name)
 
+    shadow_moves = quarantine_required_user_plugin_shadows(
+        get_process_hermes_home(),
+        names,
+    )
+    for source, destination in shadow_moves:
+        print(
+            "[dashboard-plugin-preflight] moved user shadow "
+            f"{source} -> {destination}",
+            file=sys.stderr,
+        )
+
     config = load_config()
     if not isinstance(config, dict):
         raise TypeError("Hermes config loader returned a non-object value")
-    changed = normalize_required_dashboard_plugins(config, names)
-    if changed:
+    config_changed = normalize_required_dashboard_plugins(config, names)
+    if config_changed:
         save_config(config)
-    return names, changed
+    return names, bool(shadow_moves) or config_changed
 
 
 def main() -> int:
@@ -130,7 +181,7 @@ def main() -> int:
         return 1
 
     if names:
-        state = "normalized persisted visibility state" if changed else "state already clean"
+        state = "reconciled persisted plugin state" if changed else "state already clean"
         print(
             f"[dashboard-plugin-preflight] required={','.join(names)}; {state}",
             file=sys.stderr,

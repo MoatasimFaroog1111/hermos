@@ -10,6 +10,7 @@ on:
       - "web/src/main.tsx"
       - "web/src/lib/vite-preload-recovery*"
       - "hermes_cli/web_server.py"
+      - "hermes_cli/required_dashboard_plugins.py"
       - "hermes_cli/dashboard_auth/**"
       - "docker/**"
       - ".dockerignore"

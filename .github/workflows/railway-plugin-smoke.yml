@@ -27,8 +27,11 @@ concurrency:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
     steps:
+      - name: Check out expected plugin contract
+        uses: actions/checkout@v4
+
       - name: Probe deployed Digital Human discovery contract
         env:
           BASE_URL: https://brilliant-expression-production-c3d8.up.railway.app
@@ -36,39 +39,64 @@ jobs:
         run: |
           set -euo pipefail
 
+          manifest="plugins/hermes-avatar/dashboard/manifest.json"
+          expected_name="$(jq -r '.name' "${manifest}")"
+          expected_version="$(jq -r '.version' "${manifest}")"
+          expected_path="$(jq -r '.tab.path' "${manifest}")"
+          expected_entry="$(jq -r '.entry' "${manifest}")"
+          expected_css="$(jq -r '.css // empty' "${manifest}")"
+
+          if [[ -z "${expected_name}" || -z "${expected_version}" || -z "${expected_path}" || -z "${expected_entry}" ]]; then
+            echo "Invalid Digital Human manifest in ${manifest}." >&2
+            exit 1
+          fi
+
           discovery_url="${BASE_URL}/api/dashboard/plugins?railway_smoke=${GITHUB_SHA}"
           plugins_page_url="${BASE_URL}/plugins?railway_smoke=${GITHUB_SHA}"
-          entry_url="${BASE_URL}/dashboard-plugins/hermes-avatar/dist/digital-human-entry.js?railway_smoke=${GITHUB_SHA}"
+          entry_url="${BASE_URL}/dashboard-plugins/${expected_name}/${expected_entry}?hermes_plugin_v=${expected_version}&railway_smoke=${GITHUB_SHA}"
+          css_url="${BASE_URL}/dashboard-plugins/${expected_name}/${expected_css}?hermes_plugin_v=${expected_version}&railway_smoke=${GITHUB_SHA}"
 
-          for attempt in $(seq 1 36); do
-            discovery_code="$(curl -sS --max-time 15 -o /tmp/dashboard-plugins.json -w '%{http_code}' "${discovery_url}" || true)"
+          echo "Waiting for Railway to expose ${expected_name} v${expected_version} from ${GITHUB_SHA}."
+
+          for attempt in $(seq 1 60); do
+            discovery_code="$(curl -sS --max-time 15 -H 'Cache-Control: no-cache' -o /tmp/dashboard-plugins.json -w '%{http_code}' "${discovery_url}" || true)"
+            observed_version="$(jq -r --arg name "${expected_name}" '.[] | select(.name == $name) | .version' /tmp/dashboard-plugins.json 2>/dev/null | head -n1 || true)"
 
             if [[ "${discovery_code}" == "200" ]] && \
-               jq -e '.[] | select(.name == "hermes-avatar" and .tab.path == "/digital-human" and .entry == "dist/digital-human-entry.js" and .version == "0.8.3" and .source == "bundled")' \
+               jq -e \
+                 --arg name "${expected_name}" \
+                 --arg version "${expected_version}" \
+                 --arg path "${expected_path}" \
+                 --arg entry "${expected_entry}" \
+                 '.[] | select(.name == $name and .tab.path == $path and .entry == $entry and .version == $version and .source == "bundled")' \
                  /tmp/dashboard-plugins.json >/dev/null; then
-              page_code="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "${plugins_page_url}" || true)"
-              entry_code="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "${entry_url}" || true)"
+              page_code="$(curl -sS --max-time 15 -H 'Cache-Control: no-cache' -o /dev/null -w '%{http_code}' "${plugins_page_url}" || true)"
+              entry_code="$(curl -sS --max-time 15 -H 'Cache-Control: no-cache' -o /dev/null -w '%{http_code}' "${entry_url}" || true)"
+              css_code="200"
+              if [[ -n "${expected_css}" ]]; then
+                css_code="$(curl -sS --max-time 15 -H 'Cache-Control: no-cache' -o /dev/null -w '%{http_code}' "${css_url}" || true)"
+              fi
 
-              # Public Railway binds redirect unauthenticated HTML/static requests
-              # to /login. Once the SPA is authenticated, the same-origin cookie
-              # accompanies plugin script requests. A 200 or auth redirect here is
-              # healthy; /api/dashboard/plugins above is the authoritative public
-              # discovery check and must contain hermes-avatar.
+              # Public Railway redirects unauthenticated HTML/static requests to
+              # /login. Discovery is intentionally public and authoritative for
+              # the deployed plugin revision. The route/assets must at least be
+              # reachable (200) or protected by the expected auth redirect.
               if [[ "${page_code}" =~ ^(200|302|303|307|308)$ ]] && \
-                 [[ "${entry_code}" =~ ^(200|302|303|307|308)$ ]]; then
-                echo "Digital Human discovery is live (attempt ${attempt}); page=${page_code} entry=${entry_code}."
-                jq -c '.[] | select(.name == "hermes-avatar")' /tmp/dashboard-plugins.json
+                 [[ "${entry_code}" =~ ^(200|302|303|307|308)$ ]] && \
+                 [[ "${css_code}" =~ ^(200|302|303|307|308)$ ]]; then
+                echo "Digital Human deployment is current (attempt ${attempt}); page=${page_code} entry=${entry_code} css=${css_code}."
+                jq -c --arg name "${expected_name}" '.[] | select(.name == $name)' /tmp/dashboard-plugins.json
                 exit 0
               fi
             fi
 
-            echo "attempt=${attempt} discovery=${discovery_code}"
+            echo "attempt=${attempt} discovery=${discovery_code} expected=${expected_version} observed=${observed_version:-missing}"
             if [[ -s /tmp/dashboard-plugins.json ]]; then
-              cat /tmp/dashboard-plugins.json || true
+              jq -c --arg name "${expected_name}" '.[] | select(.name == $name)' /tmp/dashboard-plugins.json 2>/dev/null || true
             fi
             sleep 10
           done
 
-          echo "Railway Digital Human discovery smoke probe failed." >&2
+          echo "Railway did not deploy the expected Digital Human revision ${expected_version} for ${GITHUB_SHA}." >&2
           cat /tmp/dashboard-plugins.json >&2 2>/dev/null || true
           exit 1

@@ -1,0 +1,73 @@
+name: Railway Digital Human smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "plugins/hermes-avatar/**"
+      - "web/src/plugins/**"
+      - "web/src/pages/PluginsPage.tsx"
+      - "hermes_cli/web_server.py"
+      - "docker/**"
+      - ".dockerignore"
+      - ".github/workflows/railway-plugin-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-digital-human-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Probe deployed bundled plugin assets
+        env:
+          BASE_URL: https://brilliant-expression-production-c3d8.up.railway.app
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          manifest_url="${BASE_URL}/dashboard-plugins/hermes-avatar/manifest.json?railway_smoke=${GITHUB_SHA}"
+          entry_url="${BASE_URL}/dashboard-plugins/hermes-avatar/dist/digital-human-entry.js?railway_smoke=${GITHUB_SHA}"
+          css_url="${BASE_URL}/dashboard-plugins/hermes-avatar/dist/avatar-v4.css?railway_smoke=${GITHUB_SHA}"
+
+          for attempt in $(seq 1 36); do
+            manifest_code="$(curl -sS --max-time 15 -o /tmp/hermes-avatar-manifest.json -w '%{http_code}' "${manifest_url}" || true)"
+            entry_code="$(curl -sS --max-time 15 -o /tmp/digital-human-entry.js -w '%{http_code}' "${entry_url}" || true)"
+            css_code="$(curl -sS --max-time 15 -o /tmp/avatar-v4.css -w '%{http_code}' "${css_url}" || true)"
+
+            if [[ "${manifest_code}" == "200" && "${entry_code}" == "200" && "${css_code}" == "200" ]]; then
+              python - <<'PY'
+          import json
+          from pathlib import Path
+
+          manifest = json.loads(Path('/tmp/hermes-avatar-manifest.json').read_text(encoding='utf-8'))
+          assert manifest['name'] == 'hermes-avatar'
+          assert manifest['tab']['path'] == '/digital-human'
+          assert manifest['entry'] == 'dist/digital-human-entry.js'
+          assert manifest['api'] == 'plugin_api_entry.py'
+
+          entry = Path('/tmp/digital-human-entry.js').read_text(encoding='utf-8')
+          assert 'REGISTRY.register("hermes-avatar", DigitalHumanBootstrapPage);' in entry
+          assert 'female-voice-entry.js' in entry
+
+          css = Path('/tmp/avatar-v4.css').read_text(encoding='utf-8')
+          assert '.dh2-page' in css
+          PY
+              echo "Railway Digital Human static pipeline is live (attempt ${attempt})."
+              exit 0
+            fi
+
+            echo "attempt=${attempt} manifest=${manifest_code} entry=${entry_code} css=${css_code}"
+            sleep 10
+          done
+
+          echo "Railway Digital Human smoke probe failed." >&2
+          echo "manifest response:" >&2
+          cat /tmp/hermes-avatar-manifest.json >&2 2>/dev/null || true
+          exit 1

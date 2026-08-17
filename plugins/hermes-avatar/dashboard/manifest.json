@@ -7,5 +7,5 @@
   "tab": { "path": "/digital-human", "position": "after:chat" },
   "entry": "dist/digital-human-entry.js",
   "css": "dist/avatar-v4.css",
-  "api": "plugin_api.py"
+  "api": "plugin_api_entry.py"
 }

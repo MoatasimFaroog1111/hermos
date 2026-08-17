@@ -20,7 +20,7 @@ def test_manifest_routes_through_deterministic_entry():
 
     assert manifest["entry"] == "dist/digital-human-entry.js"
     assert manifest["api"] == "plugin_api_entry.py"
-    assert manifest["version"] == "0.8.3"
+    assert manifest["version"] == "0.8.4"
 
 
 def test_wrapper_registers_synchronously_before_async_loading():
@@ -41,18 +41,11 @@ def test_plugin_asset_revision_propagates_from_host_to_nested_runtime():
     wrapper = _ENTRY.read_text(encoding="utf-8")
     voice = _VOICE_ENTRY.read_text(encoding="utf-8")
 
-    # The host owns the cache-revision contract and must apply the semantic
-    # plugin version to both top-level JS and CSS assets.
     assert 'params.set("hermes_plugin_v", version)' in host
     assert "pluginAssetUrl(manifest, manifest.css)" in host
     assert "pluginAssetUrl(manifest, manifest.entry)" in host
-
-    # A transient failed request must be retryable rather than permanently
-    # remaining in the in-memory loaded set.
     assert "loadedScripts.current.delete(scriptSrc)" in host
 
-    # Both nested loaders preserve the exact host-provided query string so
-    # policy, voice, avatar, renderer, behavior and CSS come from one revision.
     assert "if (entry.search) resolved.search = entry.search;" in wrapper
     assert "if (entry.search) resolved.search = entry.search;" in voice
     for filename in (

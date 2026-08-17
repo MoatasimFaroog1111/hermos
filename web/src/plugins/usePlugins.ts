@@ -2,14 +2,17 @@
  * usePlugins hook — discovers and loads dashboard plugins.
  *
  * 1. Fetches plugin manifests from GET /api/dashboard/plugins
- * 2. Injects CSS <link> tags for plugins that declare css
- * 3. Loads plugin JS bundles via <script> tags
- * 4. Waits for plugins to call register() and resolves them
+ * 2. Recovers bundled dashboard manifests that are physically available but
+ *    were omitted by stale visibility state
+ * 3. Injects CSS <link> tags for plugins that declare css
+ * 4. Loads plugin JS bundles via <script> tags
+ * 5. Waits for plugins to call register() and resolves them
  */
 
 import { useState, useEffect, useRef } from "react";
 import { api, HERMES_BASE_PATH } from "@/lib/api";
 import type { PluginManifest, RegisteredPlugin } from "./types";
+import { recoverBundledDashboardManifests } from "./coreManifestRecovery";
 import {
   getPluginComponent,
   onPluginRegistered,
@@ -43,15 +46,27 @@ export function usePlugins() {
   const [loading, setLoading] = useState(true);
   const loadedScripts = useRef<Set<string>>(new Set());
 
-  // Fetch manifests on mount.
+  // Fetch manifests on mount. A stale dashboard.hidden_plugins value can omit
+  // an application-owned bundled extension from this API, so recover only
+  // bundled manifests whose static manifest is still actually servable.
   useEffect(() => {
+    let cancelled = false;
+
+    const applyManifests = async (list: PluginManifest[]) => {
+      const effective = await recoverBundledDashboardManifests(list);
+      if (cancelled) return;
+      setManifests(effective);
+      if (effective.length === 0) setLoading(false);
+    };
+
     api
       .getPlugins()
-      .then((list) => {
-        setManifests(list);
-        if (list.length === 0) setLoading(false);
-      })
-      .catch(() => setLoading(false));
+      .then((list) => applyManifests(list))
+      .catch(() => applyManifests([]));
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Load plugin assets when manifests arrive.

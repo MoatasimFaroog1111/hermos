@@ -10,7 +10,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PLUGIN = _REPO_ROOT / "plugins" / "hermes-avatar" / "dashboard"
 _MANIFEST = _PLUGIN / "manifest.json"
 _ENTRY = _PLUGIN / "dist" / "digital-human-entry.js"
+_VOICE_ENTRY = _PLUGIN / "dist" / "female-voice-entry.js"
 _POLICY = _PLUGIN / "dist" / "deterministic-avatar-policy.js"
+_HOST_LOADER = _REPO_ROOT / "web" / "src" / "plugins" / "usePlugins.ts"
 
 
 def test_manifest_routes_through_deterministic_entry():
@@ -18,7 +20,7 @@ def test_manifest_routes_through_deterministic_entry():
 
     assert manifest["entry"] == "dist/digital-human-entry.js"
     assert manifest["api"] == "plugin_api_entry.py"
-    assert manifest["version"] == "0.8.1"
+    assert manifest["version"] == "0.8.3"
 
 
 def test_wrapper_registers_synchronously_before_async_loading():
@@ -32,6 +34,34 @@ def test_wrapper_registers_synchronously_before_async_loading():
     assert base in source
     assert source.index(register) < source.index("loadScript(policyEntry)")
     assert source.index(policy) < source.index(base)
+
+
+def test_plugin_asset_revision_propagates_from_host_to_nested_runtime():
+    host = _HOST_LOADER.read_text(encoding="utf-8")
+    wrapper = _ENTRY.read_text(encoding="utf-8")
+    voice = _VOICE_ENTRY.read_text(encoding="utf-8")
+
+    # The host owns the cache-revision contract and must apply the semantic
+    # plugin version to both top-level JS and CSS assets.
+    assert 'params.set("hermes_plugin_v", version)' in host
+    assert "pluginAssetUrl(manifest, manifest.css)" in host
+    assert "pluginAssetUrl(manifest, manifest.entry)" in host
+
+    # A transient failed request must be retryable rather than permanently
+    # remaining in the in-memory loaded set.
+    assert "loadedScripts.current.delete(scriptSrc)" in host
+
+    # Both nested loaders preserve the exact host-provided query string so
+    # policy, voice, avatar, renderer, behavior and CSS come from one revision.
+    assert "if (entry.search) resolved.search = entry.search;" in wrapper
+    assert "if (entry.search) resolved.search = entry.search;" in voice
+    for filename in (
+        "avatar-v4.js",
+        "human-behavior-engine.js",
+        "three-avatar-renderer.js",
+        "realistic.css",
+    ):
+        assert f'pluginAssetUrl("{filename}")' in voice
 
 
 def test_animation_policy_never_uses_random_clip_selection():

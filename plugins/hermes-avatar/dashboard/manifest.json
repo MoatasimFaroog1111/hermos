@@ -3,7 +3,7 @@
   "label": "Digital Human",
   "description": "Interactive 3D Digital Human for Hermes with GLB avatars, deterministic humanoid animation policy, ARKit-ready face channels, pointer/touch gaze, speech gestures, visemes, realistic female browser voice, voice-call UX and polished mobile layout.",
   "icon": "Sparkles",
-  "version": "0.8.1",
+  "version": "0.8.3",
   "tab": { "path": "/digital-human", "position": "after:chat" },
   "entry": "dist/digital-human-entry.js",
   "css": "dist/avatar-v4.css",

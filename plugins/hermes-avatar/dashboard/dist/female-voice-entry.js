@@ -103,7 +103,13 @@
   function pluginAssetUrl(fileName) {
     if (ENTRY_SCRIPT_URL) {
       try {
-        return new URL(fileName, ENTRY_SCRIPT_URL).toString();
+        const entry = new URL(ENTRY_SCRIPT_URL, window.location.href);
+        const resolved = new URL(fileName, entry);
+        // Preserve the host loader's plugin-version revision on every child
+        // asset. Otherwise a fresh entry can execute stale avatar/renderer/CSS
+        // from an earlier Railway/browser/CDN cache generation.
+        if (entry.search) resolved.search = entry.search;
+        return resolved.toString();
       } catch {
         // Fall through to the injected dashboard base path.
       }

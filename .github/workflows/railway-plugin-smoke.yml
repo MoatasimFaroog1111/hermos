@@ -9,6 +9,7 @@ on:
       - "web/src/pages/PluginsPage.tsx"
       - "web/src/main.tsx"
       - "web/src/lib/vite-preload-recovery*"
+      - "web/public/friendly-chat/**"
       - "hermes_cli/web_server.py"
       - "hermes_cli/required_dashboard_plugins.py"
       - "hermes_cli/dashboard_auth/**"
@@ -31,6 +32,34 @@ jobs:
     steps:
       - name: Check out expected plugin contract
         uses: actions/checkout@v4
+
+      - name: Validate bundled plugin runtime assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          manifest="plugins/hermes-avatar/dashboard/manifest.json"
+          plugin_root="plugins/hermes-avatar/dashboard"
+          expected_entry="$(jq -r '.entry' "${manifest}")"
+          expected_css="$(jq -r '.css // empty' "${manifest}")"
+          expected_api="$(jq -r '.api // empty' "${manifest}")"
+
+          test -s "${plugin_root}/${expected_entry}"
+          if [[ -n "${expected_css}" ]]; then
+            test -s "${plugin_root}/${expected_css}"
+          fi
+          if [[ -n "${expected_api}" ]]; then
+            test -s "${plugin_root}/${expected_api}"
+          fi
+
+          while IFS= read -r -d '' js; do
+            echo "syntax-check ${js}"
+            node --check "${js}"
+          done < <(find "${plugin_root}/dist" -type f -name '*.js' -print0 | sort -z)
+
+          # Friendly Chat is plain browser ESM rather than TypeScript. Parse it
+          # explicitly because it participates in plugin-route isolation.
+          node --check web/public/friendly-chat/main.js
 
       - name: Probe deployed Digital Human discovery contract
         env:

@@ -7,6 +7,8 @@ on:
       - "plugins/hermes-avatar/**"
       - "web/src/plugins/**"
       - "web/src/pages/PluginsPage.tsx"
+      - "web/src/main.tsx"
+      - "web/src/lib/vite-preload-recovery*"
       - "hermes_cli/web_server.py"
       - "hermes_cli/dashboard_auth/**"
       - "docker/**"

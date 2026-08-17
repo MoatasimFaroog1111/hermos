@@ -8,6 +8,7 @@ import { I18nProvider } from "./i18n";
 import { exposePluginSDK } from "./plugins";
 import { ThemeProvider } from "./themes";
 import { HERMES_BASE_PATH } from "./lib/api";
+import { installVitePreloadRecovery } from "./lib/vite-preload-recovery";
 
 class DashboardErrorBoundary extends Component<
   { children: ReactNode },
@@ -55,6 +56,10 @@ class DashboardErrorBoundary extends Component<
     );
   }
 }
+
+// A tab may stay open while Railway replaces the image. Recover once when a
+// lazy route still points at a hashed chunk from the previous Vite build.
+installVitePreloadRecovery();
 
 // Expose the plugin SDK before rendering so plugins loaded via <script>
 // can access React, components, etc. immediately.

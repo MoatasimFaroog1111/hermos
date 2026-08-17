@@ -27,13 +27,25 @@ def test_wrapper_registers_synchronously_before_async_loading():
     source = _ENTRY.read_text(encoding="utf-8")
     register = 'REGISTRY.register("hermes-avatar", DigitalHumanBootstrapPage)'
     policy = 'assetUrl("deterministic-avatar-policy.js")'
-    base = 'assetUrl("female-voice-entry.js")'
+    voice = 'assetUrl("female-voice-entry.js")'
+    avatar = 'assetUrl("avatar-v4.js")'
 
     assert register in source
     assert policy in source
-    assert base in source
+    assert voice in source
+    assert avatar in source
     assert source.index(register) < source.index("loadScript(policyEntry)")
-    assert source.index(policy) < source.index(base)
+    assert source.index(policy) < source.index(voice) < source.index(avatar)
+
+
+def test_wrapper_does_not_gate_primary_avatar_on_optional_sidecars():
+    source = _ENTRY.read_text(encoding="utf-8")
+
+    assert "SCRIPT_TIMEOUT_MS = 12000" in source
+    assert "loadScript(voiceEntry).catch" in source
+    assert ".then(() => loadScript(avatarEntry))" in source
+    assert 'window[AVATAR_READY_FLAG] = true' in source
+    assert "female voice runtime failed" in source
 
 
 def test_plugin_asset_revision_propagates_from_host_to_nested_runtime():

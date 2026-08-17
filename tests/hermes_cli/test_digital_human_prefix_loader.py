@@ -21,7 +21,8 @@ def test_digital_human_nested_assets_follow_dashboard_prefix():
 
     assert "document.currentScript?.src" in source
     assert "window.__HERMES_BASE_PATH__" in source
-    assert "new URL(fileName, ENTRY_SCRIPT_URL)" in source
+    assert "new URL(ENTRY_SCRIPT_URL, window.location.href)" in source
+    assert "new URL(fileName, entry)" in source
 
     for asset in (
         "avatar-v4.js",

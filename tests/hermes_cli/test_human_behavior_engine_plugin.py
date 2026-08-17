@@ -24,29 +24,36 @@ def test_female_voice_entry_loads_behavior_before_avatar_runtime():
 def test_human_behavior_engine_separates_behavior_responsibilities():
     source = (_DIST / "human-behavior-engine.js").read_text(encoding="utf-8")
 
-    assert 'const VERSION = "1.0.0"' in source
-    assert "class AttentionController" in source
-    assert "class BlinkController" in source
-    assert "class ExpressionController" in source
-    assert "class BodyMotionController" in source
-    assert "class HumanBehaviorEngine" in source
-    assert "class HumanizedThreeAvatarRenderer" in source
-    assert "decorateRendererModule" in source
+    for controller in (
+        "IntervalGate",
+        "AttentionController",
+        "SaccadeController",
+        "BreathController",
+        "PostureController",
+        "GestureController",
+        "HumanBehaviorEngine",
+    ):
+        assert f"class {controller}" in source
+
+    assert "patchRenderer" in source
     assert "installRendererHook" in source
+    assert "speechEnergy" in source
+    assert "human behavior fallback" in source
 
 
 def test_human_behavior_engine_has_state_aware_human_motion():
     source = (_DIST / "human-behavior-engine.js").read_text(encoding="utf-8")
 
-    for state in ("idle", "listening", "thinking", "speaking", "error"):
+    for state in ("idle", "listening", "thinking", "speaking"):
         assert f'"{state}"' in source
 
-    assert "pendingSecondBlink" in source
-    assert "briefBreak" in source
-    assert "nextWeightShiftAt" in source
-    assert "nextGestureAt" in source
-    assert "eyeSquintLeft" in source
-    assert "eyeSquintRight" in source
+    assert "breakGate" in source
+    assert "rateGate" in source
+    assert "nextListeningNod" in source
+    assert "nextSpeechGesture" in source
+    assert "microGate" in source
+    assert "pointerActive" in source
+    assert "reducedMotion" in source
     assert "prefers-reduced-motion" not in source  # renderer supplies this policy
 
 
@@ -64,6 +71,7 @@ def test_human_behavior_runtime_javascript_parses_when_node_is_available():
 
     for filename in (
         "human-behavior-engine.js",
+        "digital-human-entry.js",
         "female-voice-entry.js",
         "avatar-v4.js",
         "three-avatar-renderer.js",

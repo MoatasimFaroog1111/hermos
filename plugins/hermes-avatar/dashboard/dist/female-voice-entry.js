@@ -268,13 +268,66 @@
     if (window[CALL_UX_FLAG]) return;
     window[CALL_UX_FLAG] = true;
 
-    const observer = new MutationObserver(() => refreshVoiceCallButton());
-    observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["class", "disabled"],
+    // Two observers instead of one document-wide one:
+    //
+    // - `mountWatcher` only watches childList mutations (cheap, no attribute
+    //   filter) so it can notice the composer appearing/disappearing as the
+    //   Digital Human page mounts/unmounts, and hand off to...
+    // - `scopedObserver`, attached to the composer itself once it exists,
+    //   which is the only one that watches class/disabled attributes.
+    //
+    // Previously a single observer watched class/disabled attribute changes
+    // across the *entire* document, forever, for the whole session. Every
+    // unrelated re-render anywhere in the app (streaming chat replies,
+    // session list updates, button disabled-state toggles, ...) re-ran a
+    // full DOM query + write pass, and the cost grew with the app's DOM size
+    // (thousands of messages/sessions) — compounding into multi-hundred-ms
+    // 'message' handler violations that eventually starved the main thread
+    // and made the whole tab unresponsive.
+    let scopedObserver = null;
+    // Tracks the actual composer node the scoped observer is attached to, so
+    // a same-tick swap (e.g. ProfileKeyedRoutes remounting the whole routed
+    // tree in one commit when the active profile changes) is detected by
+    // identity rather than by whether `scopedObserver` merely exists. Without
+    // this, a remount that removes the old composer and inserts a new one in
+    // the same mutation batch left `scopedObserver` dangling on the detached
+    // old node — attaching neither happened (scopedObserver was still
+    // truthy) nor did detaching (composer was still truthy), so the new
+    // call button's is-live toggles silently stopped being observed.
+    let observedComposer = null;
+
+    const attachScoped = composer => {
+      scopedObserver?.disconnect();
+      observedComposer = composer;
+      scopedObserver = new MutationObserver(() => refreshVoiceCallButton());
+      scopedObserver.observe(composer, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["class", "disabled"],
+      });
+    };
+
+    const detachScoped = () => {
+      scopedObserver?.disconnect();
+      scopedObserver = null;
+      observedComposer = null;
+    };
+
+    const mountWatcher = new MutationObserver(() => {
+      const { composer } = getComposerControls();
+      if (composer === observedComposer) return;
+      if (composer) {
+        attachScoped(composer);
+        refreshVoiceCallButton();
+      } else {
+        detachScoped();
+      }
     });
+    mountWatcher.observe(document.body, { childList: true, subtree: true });
+
+    const { composer } = getComposerControls();
+    if (composer) attachScoped(composer);
     refreshVoiceCallButton();
   }
 

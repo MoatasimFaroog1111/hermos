@@ -20,7 +20,7 @@ def test_manifest_routes_through_deterministic_entry():
 
     assert manifest["entry"] == "dist/digital-human-entry.js"
     assert manifest["api"] == "plugin_api_entry.py"
-    assert manifest["version"] == "0.8.6"
+    assert manifest["version"] == "0.8.7"
 
 
 def test_wrapper_registers_synchronously_before_async_loading():

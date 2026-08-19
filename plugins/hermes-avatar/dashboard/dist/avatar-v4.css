@@ -1,7 +1,9 @@
 @import url("/dashboard-plugins/hermes-avatar/dist/realistic.css");
 
-/* v0.7 keeps mobile presentation concerns isolated in this skin layer.
-   Runtime behavior, avatar rendering, speech and chat logic stay untouched. */
+/* v0.9 keeps mobile presentation concerns isolated in this skin layer.
+   Runtime behavior, avatar rendering, speech and chat logic stay untouched.
+   The voice-call label is derived from React's existing `is-live` state class;
+   no sidecar mutates the composer DOM. */
 .dh2-header > .dh2-composer__actions {
   margin-top: 0;
   flex-wrap: wrap;
@@ -14,7 +16,8 @@
   cursor: not-allowed;
 }
 
-.dh2-composer__actions .dh2-call {
+.dh2-composer__actions .dh2-call,
+.dh2-chat .dh2-composer__actions > .dh2-icon:first-child {
   min-width: 7.25rem;
   padding-inline: .85rem;
   border-color: rgba(102, 231, 255, .38);
@@ -23,17 +26,33 @@
   box-shadow: 0 7px 20px rgba(25, 153, 190, .12);
 }
 
-.dh2-composer__actions .dh2-call::before {
+.dh2-chat .dh2-composer__actions > .dh2-icon:first-child {
+  font-size: 0;
+}
+
+.dh2-composer__actions .dh2-call::before,
+.dh2-chat .dh2-composer__actions > .dh2-icon:first-child::before {
   content: "☎";
   margin-right: .42rem;
   font-size: .82rem;
 }
 
-.dh2-composer__actions .dh2-call.is-live {
+.dh2-chat .dh2-composer__actions > .dh2-icon:first-child::after {
+  content: "VOICE CALL";
+  font-size: .58rem;
+  letter-spacing: .055em;
+}
+
+.dh2-composer__actions .dh2-call.is-live,
+.dh2-chat .dh2-composer__actions > .dh2-icon:first-child.is-live {
   border-color: rgba(255, 109, 139, .62);
   background: linear-gradient(135deg, rgba(145, 38, 68, .84), rgba(92, 23, 48, .78));
   color: #fff3f6;
   box-shadow: 0 0 0 3px rgba(255, 109, 139, .08), 0 8px 24px rgba(145, 38, 68, .18);
+}
+
+.dh2-chat .dh2-composer__actions > .dh2-icon:first-child.is-live::after {
+  content: "END CALL";
 }
 
 @media (max-width: 680px) {
@@ -288,7 +307,8 @@
     align-items: stretch;
   }
 
-  .dh2-composer__actions .dh2-call {
+  .dh2-composer__actions .dh2-call,
+  .dh2-chat .dh2-composer__actions > .dh2-icon:first-child {
     min-width: 0;
     min-height: 2.55rem;
     width: 100%;
@@ -296,6 +316,10 @@
     border-radius: .76rem;
     font-size: .55rem;
     letter-spacing: .055em;
+  }
+
+  .dh2-chat .dh2-composer__actions > .dh2-icon:first-child {
+    font-size: 0;
   }
 
   .dh2-icon,
@@ -373,6 +397,7 @@
   }
 
   .dh2-composer__actions .dh2-call,
+  .dh2-chat .dh2-composer__actions > .dh2-icon:first-child,
   .dh2-send {
     grid-column: 1 / -1;
   }

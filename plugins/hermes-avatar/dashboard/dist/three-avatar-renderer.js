@@ -181,11 +181,17 @@
 
     initScene() {
       const THREE = this.THREE;
+      // "high-performance" forces a discrete-GPU switch on hybrid-graphics
+      // laptops and can hang WebGL context creation for many seconds (or
+      // longer) on some driver/VDI/remote-desktop setups — and this is the
+      // only place in the whole dashboard that touches WebGL, so it's the
+      // one page where that class of hang would show up. "default" lets the
+      // browser/OS pick without forcing a GPU switch.
       this.renderer = new THREE.WebGLRenderer({
         canvas: this.canvas,
         alpha: true,
         antialias: true,
-        powerPreference: "high-performance",
+        powerPreference: "default",
       });
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
       this.renderer.setClearColor(0x000000, 0);

@@ -662,17 +662,23 @@
         { className: "dh2-composer__actions" },
         h("button", {
           type: "button",
-          className: `dh2-icon ${listening ? "is-live" : ""}`,
+          className: `dh2-icon dh2-call ${listening ? "is-live" : ""}`,
           onClick: onMic,
           disabled: !micSupported || busy,
+          "aria-label": listening
+            ? "End voice call"
+            : "Start voice call with automatic spoken reply",
           title: micSupported
-            ? (listening ? "Stop listening" : "Use microphone")
+            ? (listening
+              ? "End voice call"
+              : "Start voice call — Hermes replies by voice automatically")
             : "Speech recognition unavailable",
-        }, listening ? "■" : "●"),
+        }, listening ? "END CALL" : "VOICE CALL"),
         h("button", {
           type: "button",
           className: `dh2-icon ${voiceEnabled ? "is-on" : ""}`,
           onClick: onToggleVoice,
+          "aria-pressed": voiceEnabled ? "true" : "false",
         }, voiceEnabled ? "VOICE" : "MUTE"),
         h("button", {
           type: "button",
@@ -799,8 +805,8 @@
       endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
     }, [messages, state]);
 
-    const speakReply = useCallback(text => {
-      if (!voiceEnabled || !speechOutput.supported) {
+    const speakReply = useCallback((text, forceVoice = false) => {
+      if ((!voiceEnabled && !forceVoice) || !speechOutput.supported) {
         transition(STATES.IDLE);
         return;
       }
@@ -818,7 +824,7 @@
       });
     }, [controller, speechOutput, transition, voiceEnabled]);
 
-    const send = useCallback(async overrideText => {
+    const send = useCallback(async (overrideText, options = {}) => {
       const text = (overrideText || input).trim();
       if (!text || state === STATES.THINKING) return;
 
@@ -846,7 +852,7 @@
             transport: response.transport === "api-server" ? "AGENT" : "DIRECT",
           },
         ]);
-        speakReply(reply);
+        speakReply(reply, Boolean(options.forceVoice));
       } catch (requestError) {
         setError(requestError instanceof Error
           ? requestError.message
@@ -872,6 +878,10 @@
         return;
       }
 
+      // Starting a voice call explicitly opts the interaction back into TTS.
+      // The forced reply option below also guarantees this call's response is
+      // spoken even though this async handler retains the pre-render closure.
+      setVoiceEnabled(true);
       speechOutput.stop();
       setError("");
       setInterim("");
@@ -885,7 +895,7 @@
         });
         setInput(text);
         transition(STATES.IDLE);
-        await send(text);
+        await send(text, { forceVoice: true });
       } catch (micError) {
         const message = micError instanceof Error
           ? micError.message
@@ -929,7 +939,7 @@
       } catch (removeError) {
         setError(removeError instanceof Error
           ? removeError.message
-          : "Unable to remove the GLB avatar.");
+          : "Unable to remove the uploaded GLB avatar.");
       } finally {
         setAvatarBusy(false);
       }

@@ -12,7 +12,7 @@ _ENTRY = (
     / "hermes-avatar"
     / "dashboard"
     / "dist"
-    / "female-voice-entry.js"
+    / "digital-human-entry.js"
 )
 _AVATAR = _ENTRY.with_name("avatar-v4.js")
 _PLUGIN_LOADER = _REPO_ROOT / "web" / "src" / "plugins" / "usePlugins.ts"
@@ -32,8 +32,10 @@ def test_digital_human_entry_registers_before_async_runtime_loading():
     register = 'REGISTRY.register("hermes-avatar", DigitalHumanBootstrapPage)'
     assert "function DigitalHumanBootstrapPage()" in source
     assert register in source
-    assert "loadAvatarEntry();" in source
-    assert source.index(register) < source.index("loadAvatarEntry();")
+    assert "loadScript(policyEntry)" in source
+    assert "loadScript(avatarEntry)" in source
+    assert source.index(register) < source.index("loadScript(policyEntry)")
+    assert source.index(register) < source.index("loadScript(avatarEntry)")
 
 
 def test_full_avatar_replaces_bootstrap_registration_when_ready():

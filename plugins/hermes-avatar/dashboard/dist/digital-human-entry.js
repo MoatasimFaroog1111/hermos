@@ -38,9 +38,9 @@
   }
 
   // The host validates registration immediately after the entry script loads.
-  // Keep that contract synchronous. The full avatar page is loaded directly by
-  // this composition root so optional voice/behavior preloads can never leave
-  // the user trapped on the bootstrap screen.
+  // Keep that contract synchronous. This composition root is the single owner
+  // of runtime ordering; optional sidecars fail open and never mutate React's
+  // rendered DOM to manage voice-call state.
   REGISTRY.register("hermes-avatar", DigitalHumanBootstrapPage);
 
   function assetUrl(fileName) {
@@ -114,6 +114,7 @@
 
   const policyEntry = assetUrl("deterministic-avatar-policy.js");
   const voiceEntry = assetUrl("female-voice-entry.js");
+  const behaviorEntry = assetUrl("human-behavior-engine.js");
   const avatarEntry = assetUrl("avatar-v4.js");
 
   loadScript(policyEntry)
@@ -123,13 +124,17 @@
       console.error("[hermes-avatar] deterministic animation policy failed", error);
     })
     .then(() => loadScript(voiceEntry).catch(error => {
-      // Voice is also fail-open. Text/avatar interaction must not be blocked by
+      // Voice is fail-open. Text/avatar interaction must not be blocked by
       // browser voice support or a transient sidecar loading failure.
       console.error("[hermes-avatar] female voice runtime failed", error);
     }))
+    .then(() => loadScript(behaviorEntry).catch(error => {
+      // Human behavior is an enhancement. Base avatar motion remains usable
+      // when this sidecar is missing or fails to initialize.
+      console.warn("[hermes-avatar] human behavior engine unavailable; continuing with base motion", error);
+    }))
     .then(() => loadScript(avatarEntry))
     .then(() => {
-      // female-voice-entry uses this flag to avoid a second avatar bootstrap.
       window[AVATAR_READY_FLAG] = true;
     })
     .catch(error => {

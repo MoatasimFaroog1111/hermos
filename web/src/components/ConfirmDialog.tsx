@@ -29,6 +29,16 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
 
+  // Read the latest onCancel through a ref so the effect below only keys off
+  // `open` — a non-memoized onCancel from the caller would otherwise tear
+  // down/re-run this effect on unrelated parent re-renders, and its cleanup
+  // (restoring focus to the pre-open element) would fight the initial focus
+  // set on the confirm button.
+  const onCancelRef = useRef(onCancel);
+  useEffect(() => {
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
+
   useEffect(() => {
     if (!open) return;
 
@@ -40,7 +50,7 @@ export function ConfirmDialog({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        onCancel();
+        onCancelRef.current();
         return;
       }
       if (e.key !== "Tab") return;
@@ -75,7 +85,7 @@ export function ConfirmDialog({
       document.body.style.overflow = prevOverflow;
       prevActive?.focus?.();
     };
-  }, [open, onCancel]);
+  }, [open]);
 
   if (!open) return null;
 

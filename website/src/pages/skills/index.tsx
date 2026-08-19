@@ -300,48 +300,46 @@ function SkillCard({
   return (
     <div
       className={`${styles.card} ${expanded ? styles.cardExpanded : ""}`}
-      onClick={onToggle}
-      onKeyDown={(e) => {
-        // Ignore keydowns bubbling up from nested interactive elements
-        // (copy button, tag pills, docs link) so their own Enter/Space
-        // activation isn't hijacked into toggling the card.
-        if (e.target !== e.currentTarget) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onToggle();
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      aria-expanded={expanded}
-      aria-label={`${skill.name} — ${expanded ? "collapse" : "expand"} details`}
       style={style}
     >
       <div className={styles.cardAccent} style={{ background: src.color }} />
 
       <div className={styles.cardInner}>
-        <div className={styles.cardTop}>
-          <span className={styles.cardIcon}>{icon}</span>
-          <div className={styles.cardTitleGroup}>
-            <h3 className={styles.cardTitle}>
-              {highlightMatch(skill.name, query)}
-            </h3>
-            <span
-              className={styles.sourcePill}
-              style={{
-                color: src.color,
-                background: src.bg,
-                borderColor: src.border,
-              }}
-            >
-              {src.icon} {src.label}
-            </span>
+        {/* Only the non-interactive preview (icon/title/description) is the
+            expand/collapse control — the card also contains real nested
+            buttons and a link (category filter, tags, copy, docs), and
+            those can't live inside another interactive element without
+            losing their own roles for assistive tech. */}
+        <button
+          type="button"
+          className={styles.cardToggle}
+          onClick={onToggle}
+          aria-expanded={expanded}
+          aria-label={`${skill.name} — ${expanded ? "collapse" : "expand"} details`}
+        >
+          <div className={styles.cardTop}>
+            <span className={styles.cardIcon}>{icon}</span>
+            <div className={styles.cardTitleGroup}>
+              <h3 className={styles.cardTitle}>
+                {highlightMatch(skill.name, query)}
+              </h3>
+              <span
+                className={styles.sourcePill}
+                style={{
+                  color: src.color,
+                  background: src.bg,
+                  borderColor: src.border,
+                }}
+              >
+                {src.icon} {src.label}
+              </span>
+            </div>
           </div>
-        </div>
 
-        <p className={`${styles.cardDesc} ${expanded ? styles.cardDescFull : ""}`}>
-          {highlightMatch(skill.description || "No description available.", query)}
-        </p>
+          <p className={`${styles.cardDesc} ${expanded ? styles.cardDescFull : ""}`}>
+            {highlightMatch(skill.description || "No description available.", query)}
+          </p>
+        </button>
 
         <div className={styles.cardMeta}>
           <button

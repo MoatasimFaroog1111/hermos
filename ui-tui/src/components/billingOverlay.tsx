@@ -748,7 +748,7 @@ function AutoReloadScreen({ ctx, onClose, onPatch, s, t }: ScreenProps) {
 
   const turnOn = () => {
     if (noCard) {
-      ctx.sys('🔴 No saved card — manage billing on the portal.')
+      ctx.sys('✕ No saved card — manage billing on the portal.')
 
       if (s.portal_url) {
         ctx.openPortal(s.portal_url)
@@ -767,7 +767,7 @@ function AutoReloadScreen({ ctx, onClose, onPatch, s, t }: ScreenProps) {
 
     void ctx.applyAutoReload(true, Number(pair.threshold), Number(pair.reloadTo)).then(ok => {
       if (ok) {
-        ctx.sys(`✅ Auto-reload on: below $${pair.threshold} → reload to $${pair.reloadTo}.`)
+        ctx.sys(`✓ Auto-reload on: below $${pair.threshold} → reload to $${pair.reloadTo}.`)
       }
     })
     onClose()
@@ -781,7 +781,7 @@ function AutoReloadScreen({ ctx, onClose, onPatch, s, t }: ScreenProps) {
     const rel = Number(prefill(ar?.reload_to_usd)) || 0
     void ctx.applyAutoReload(false, thr, rel).then(ok => {
       if (ok) {
-        ctx.sys('✅ Auto-reload turned off.')
+        ctx.sys('✓ Auto-reload turned off.')
       }
     })
     onClose()

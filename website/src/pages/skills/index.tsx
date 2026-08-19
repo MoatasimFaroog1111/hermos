@@ -301,6 +301,20 @@ function SkillCard({
     <div
       className={`${styles.card} ${expanded ? styles.cardExpanded : ""}`}
       onClick={onToggle}
+      onKeyDown={(e) => {
+        // Ignore keydowns bubbling up from nested interactive elements
+        // (copy button, tag pills, docs link) so their own Enter/Space
+        // activation isn't hijacked into toggling the card.
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-expanded={expanded}
+      aria-label={`${skill.name} — ${expanded ? "collapse" : "expand"} details`}
       style={style}
     >
       <div className={styles.cardAccent} style={{ background: src.color }} />
@@ -697,7 +711,7 @@ export default function SkillsDashboard() {
 
         <div className={styles.controlsBar}>
           <div className={styles.searchWrap}>
-            <svg className={styles.searchIcon} viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
+            <svg className={styles.searchIcon} viewBox="0 0 20 20" fill="currentColor" width="18" height="18" aria-hidden="true">
               <path
                 fillRule="evenodd"
                 d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"
@@ -713,8 +727,13 @@ export default function SkillsDashboard() {
               className={styles.searchInput}
             />
             {search && (
-              <button className={styles.clearBtn} onClick={() => setSearch("")}>
-                <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+              <button
+                type="button"
+                className={styles.clearBtn}
+                onClick={() => setSearch("")}
+                aria-label="Clear search"
+              >
+                <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16" aria-hidden="true">
                   <path
                     fillRule="evenodd"
                     d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
@@ -758,10 +777,13 @@ export default function SkillsDashboard() {
 
         <div className={styles.layout}>
           <button
+            type="button"
             className={styles.sidebarToggle}
             onClick={() => setSidebarOpen(!sidebarOpen)}
+            aria-expanded={sidebarOpen}
+            aria-controls="skills-category-sidebar"
           >
-            <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
+            <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18" aria-hidden="true">
               <path
                 fillRule="evenodd"
                 d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h6a1 1 0 110 2H4a1 1 0 01-1-1z"
@@ -776,7 +798,10 @@ export default function SkillsDashboard() {
             )}
           </button>
 
-          <aside className={`${styles.sidebar} ${sidebarOpen ? styles.sidebarOpen : ""}`}>
+          <aside
+            id="skills-category-sidebar"
+            className={`${styles.sidebar} ${sidebarOpen ? styles.sidebarOpen : ""}`}
+          >
             <div className={styles.sidebarHeader}>
               <h2 className={styles.sidebarTitle}>Categories</h2>
               {categoryFilter !== "all" && (
@@ -822,20 +847,41 @@ export default function SkillsDashboard() {
                 {search && (
                   <span className={styles.filterChip}>
                     &ldquo;{search}&rdquo;
-                    <button onClick={() => setSearch("")}>&times;</button>
+                    <button
+                      type="button"
+                      onClick={() => setSearch("")}
+                      aria-label={`Clear search filter "${search}"`}
+                    >
+                      &times;
+                    </button>
                   </span>
                 )}
                 {sourceFilter !== "all" && (
                   <span className={styles.filterChip}>
                     {SOURCE_CONFIG[sourceFilter]?.label || sourceFilter}
-                    <button onClick={() => setSourceFilter("all")}>&times;</button>
+                    <button
+                      type="button"
+                      onClick={() => setSourceFilter("all")}
+                      aria-label={`Clear source filter: ${SOURCE_CONFIG[sourceFilter]?.label || sourceFilter}`}
+                    >
+                      &times;
+                    </button>
                   </span>
                 )}
                 {categoryFilter !== "all" && (
                   <span className={styles.filterChip}>
                     {categoryEntries.find((c) => c.key === categoryFilter)?.label ||
                       categoryFilter}
-                    <button onClick={() => setCategoryFilter("all")}>&times;</button>
+                    <button
+                      type="button"
+                      onClick={() => setCategoryFilter("all")}
+                      aria-label={`Clear category filter: ${
+                        categoryEntries.find((c) => c.key === categoryFilter)?.label ||
+                        categoryFilter
+                      }`}
+                    >
+                      &times;
+                    </button>
                   </span>
                 )}
                 <button className={styles.clearAllBtn} onClick={clearAll}>

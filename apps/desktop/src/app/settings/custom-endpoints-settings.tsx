@@ -272,6 +272,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                     </Button>
                     {endpoint.source !== 'direct-config' && (
                       <Button
+                        aria-label="Delete endpoint"
                         className="hover:text-destructive"
                         disabled={deleting === endpoint.id}
                         onClick={() => void handleDelete(endpoint)}

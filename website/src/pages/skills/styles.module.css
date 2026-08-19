@@ -40,7 +40,9 @@
   font-size: 0.75rem;
   letter-spacing: 0.15em;
   text-transform: uppercase;
-  color: rgba(255, 215, 0, 0.5);
+  /* alpha 0.55 keeps the gold tint while clearing 4.5:1 contrast on the
+     dark hero background (0.5 measured ~4.06:1, just under WCAG AA) */
+  color: rgba(255, 215, 0, 0.55);
   margin-bottom: 0.75rem;
 }
 
@@ -144,8 +146,8 @@
 }
 
 .searchInput:focus {
-  border-color: rgba(255, 215, 0, 0.4);
-  box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.06);
+  border-color: rgba(255, 215, 0, 0.7);
+  box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.35);
 }
 
 .searchInput::placeholder {
@@ -162,8 +164,12 @@
   border: none;
   color: var(--ifm-font-color-secondary);
   cursor: pointer;
-  padding: 0.15rem;
+  padding: 0.3rem;
+  min-width: 24px;
+  min-height: 24px;
   display: flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0.6;
   transition: opacity 0.15s;
 }
@@ -328,7 +334,9 @@
 .catItemCount {
   font-family: "JetBrains Mono", monospace;
   font-size: 0.68rem;
-  color: rgba(255, 215, 0, 0.3);
+  /* alpha 0.3 measured ~2.1:1 against the dark sidebar background, well
+     under WCAG AA's 4.5:1 for normal text; 0.55 clears it */
+  color: rgba(255, 215, 0, 0.55);
   min-width: 1.5rem;
   text-align: right;
 }
@@ -377,11 +385,16 @@
 }
 
 .filterChip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   color: inherit;
   cursor: pointer;
-  padding: 0;
+  padding: 0.2rem;
+  min-width: 24px;
+  min-height: 24px;
   font-size: 0.85rem;
   line-height: 1;
   opacity: 0.6;
@@ -435,6 +448,13 @@
   cursor: pointer;
   transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
   animation: cardIn 0.35s ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    animation: none;
+    transition: none;
+  }
 }
 
 [data-theme="dark"] .card {

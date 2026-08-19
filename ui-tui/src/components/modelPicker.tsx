@@ -12,6 +12,7 @@ import type { Theme } from '../theme.js'
 
 import { OverlayHint, useOverlayKeys, windowItems } from './overlayControls.js'
 import { chipRowProps, clampOverlayWidth } from './overlayPrimitives.js'
+import { Spinner } from './thinking.js'
 
 const VISIBLE = 12
 const MIN_WIDTH = 40
@@ -442,13 +443,17 @@ export function ModelPicker({
   })
 
   if (loading) {
-    return <Text color={t.color.muted}>loading models…</Text>
+    return (
+      <Text color={t.color.muted}>
+        <Spinner color={t.color.accent} /> loading models…
+      </Text>
+    )
   }
 
   if (err) {
     return (
       <Box flexDirection="column">
-        <Text color={t.color.label}>error: {err}</Text>
+        <Text color={t.color.error}>error: {err}</Text>
         <OverlayHint t={t}>Esc/q cancel</OverlayHint>
       </Box>
     )

@@ -162,7 +162,7 @@ describe('/billing slash command (overlay-driven)', () => {
       await vi.runAllTimersAsync()
       const out = printed(sys)
       expect(out).toContain('Charge submitted')
-      expect(out).toContain('✅ $100 added.')
+      expect(out).toContain('✓ $100 added.')
     } finally {
       vi.useRealTimers()
     }

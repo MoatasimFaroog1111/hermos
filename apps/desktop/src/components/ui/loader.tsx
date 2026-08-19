@@ -330,10 +330,37 @@ export function Loader({
   const pathRef = useRef<SVGPathElement | null>(null)
 
   useEffect(() => {
+    particleRefs.current.length = config.particleCount
+
+    // Under reduced motion, paint one still frame (no spin, no particle
+    // trail chase) instead of running the rAF loop forever — this loader
+    // isn't CSS-driven, so it's outside the blanket reduced-motion rule in
+    // styles.css and needs its own opt-out. `role="status"` + the label still
+    // communicate "loading" without the continuous motion.
+    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      const detailScale = detailScaleFor(0, config, 0)
+
+      groupRef.current?.setAttribute('transform', 'rotate(0 50 50)')
+      pathRef.current?.setAttribute('d', buildPath(config, detailScale, pathSteps))
+
+      particleRefs.current.forEach((node, index) => {
+        if (!node) {
+          return
+        }
+
+        const particle = particleFor(config, index, 0, detailScale, strokeScale)
+        node.setAttribute('cx', particle.x.toFixed(2))
+        node.setAttribute('cy', particle.y.toFixed(2))
+        node.setAttribute('r', particle.radius.toFixed(2))
+        node.setAttribute('opacity', particle.opacity.toFixed(3))
+      })
+
+      return
+    }
+
     let animationFrame = 0
     const startedAt = performance.now()
     const phaseOffset = Math.random()
-    particleRefs.current.length = config.particleCount
 
     const render = (now: number) => {
       const time = now - startedAt

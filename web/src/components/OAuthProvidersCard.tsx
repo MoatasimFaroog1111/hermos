@@ -215,17 +215,20 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
 
                 <div className="flex items-center gap-1.5 shrink-0">
                   {p.docs_url && (
-                    <a
-                      href={p.docs_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex"
+                    // A native <a> can't wrap a <Button> (invalid nested
+                    // interactive content), so open the link imperatively
+                    // from a single real button instead.
+                    <Button
+                      ghost
+                      size="icon"
                       title={`Open ${p.name} docs`}
+                      aria-label={`Open ${p.name} docs`}
+                      onClick={() =>
+                        window.open(p.docs_url, "_blank", "noopener,noreferrer")
+                      }
                     >
-                      <Button ghost size="icon">
-                        <ExternalLink />
-                      </Button>
-                    </a>
+                      <ExternalLink />
+                    </Button>
                   )}
                   {!p.status.logged_in && p.flow !== "external" && (
                     <Button

@@ -94,7 +94,7 @@
 
   // This sidecar owns only voice selection. Voice-call state, buttons, chat,
   // avatar loading and behavior loading remain owned by their React/runtime
-  // composition layers. In particular, there is deliberately no DOM polling,
-  // MutationObserver, querySelector loop, or document-wide mutation handler.
+  // composition layers. It deliberately performs no composer DOM lifecycle
+  // work and installs no document-wide mutation or click handler.
   installFemaleVoicePatch();
 })();

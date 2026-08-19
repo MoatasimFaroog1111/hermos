@@ -65,7 +65,7 @@ def test_manifest_points_to_deterministic_runtime_assets():
     manifest = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
 
     assert manifest["name"] == "hermes-avatar"
-    assert manifest["version"] == "0.8.8"
+    assert manifest["version"] == "0.8.9"
     assert manifest["tab"]["path"] == "/digital-human"
     assert manifest["entry"] == "dist/digital-human-entry.js"
     assert manifest["css"] == "dist/avatar-v4.css"
@@ -102,7 +102,7 @@ def test_api_entry_raises_production_upload_limit_without_changing_core(monkeypa
     assert module.router is module._base.router
 
 
-def test_digital_human_entry_registers_before_loading_policy_and_voice_runtime():
+def test_digital_human_entry_registers_before_loading_runtime_sidecars():
     source = (_PLUGIN_DIR / "dist" / "digital-human-entry.js").read_text(
         encoding="utf-8"
     )
@@ -110,12 +110,16 @@ def test_digital_human_entry_registers_before_loading_policy_and_voice_runtime()
     register = 'REGISTRY.register("hermes-avatar", DigitalHumanBootstrapPage)'
     policy = 'assetUrl("deterministic-avatar-policy.js")'
     voice = 'assetUrl("female-voice-entry.js")'
+    behavior = 'assetUrl("human-behavior-engine.js")'
+    avatar = 'assetUrl("avatar-v4.js")'
 
     assert register in source
     assert policy in source
     assert voice in source
+    assert behavior in source
+    assert avatar in source
     assert source.index(register) < source.index("loadScript(policyEntry)")
-    assert source.index(policy) < source.index(voice)
+    assert source.index(policy) < source.index(voice) < source.index(behavior) < source.index(avatar)
 
 
 def test_human_behavior_engine_separates_motion_responsibilities():
@@ -142,7 +146,7 @@ def test_human_behavior_engine_separates_motion_responsibilities():
     assert "prefers-reduced-motion" not in source  # renderer remains accessibility owner
 
 
-def test_female_voice_entry_prefers_natural_female_voices_and_loads_avatar():
+def test_female_voice_entry_prefers_natural_female_voices_without_dom_observer():
     source = (_PLUGIN_DIR / "dist" / "female-voice-entry.js").read_text(
         encoding="utf-8"
     )
@@ -151,11 +155,13 @@ def test_female_voice_entry_prefers_natural_female_voices_and_loads_avatar():
     assert "chooseFemaleVoice" in source
     assert "natural|neural|online|premium|enhanced|studio|wavenet" in source
     assert "zira|samantha|victoria" in source
-    assert "/dashboard-plugins/hermes-avatar/dist/avatar-v4.js" in source
-    assert "/dashboard-plugins/hermes-avatar/dist/human-behavior-engine.js" in source
+    assert "MutationObserver" not in source
+    assert "querySelector" not in source
+    assert "document.addEventListener" not in source
+    assert "loadAvatarEntry" not in source
 
 
-def test_v4_styles_preserve_base_ui_and_wrap_avatar_controls():
+def test_v4_styles_preserve_base_ui_and_render_voice_call_from_react_state():
     source = (_PLUGIN_DIR / "dist" / "avatar-v4.css").read_text(encoding="utf-8")
 
     assert "/dashboard-plugins/hermes-avatar/dist/realistic.css" in source
@@ -163,6 +169,10 @@ def test_v4_styles_preserve_base_ui_and_wrap_avatar_controls():
     assert "flex-wrap: wrap" in source
     assert "flex-direction: column" in source
     assert "max-width: 390px" in source
+    assert ".dh2-chat .dh2-composer__actions > .dh2-icon:first-child" in source
+    assert 'content: "VOICE CALL"' in source
+    assert 'content: "END CALL"' in source
+    assert ".dh2-icon:first-child.is-live" in source
 
 
 def test_v4_entry_registers_plugin_and_supports_secure_upload():

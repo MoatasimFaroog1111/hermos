@@ -1,132 +1,7 @@
 (function () {
   "use strict";
 
-  const ENTRY_SCRIPT_URL = document.currentScript?.src || "";
   const PATCH_FLAG = "__HERMES_FEMALE_VOICE_PATCHED__";
-  const CALL_UX_FLAG = "__HERMES_VOICE_CALL_UX__";
-  const CALL_AUTO_REPLY_FLAG = "__HERMES_VOICE_CALL_AUTO_REPLY__";
-  const AVATAR_READY_FLAG = "__HERMES_AVATAR_ENTRY_LOADED__";
-  const SCRIPT_TIMEOUT_MS = 15000;
-  const SDK = window.__HERMES_PLUGIN_SDK__;
-  const REGISTRY = window.__HERMES_PLUGINS__;
-  let runtimeFailure = null;
-
-  if (!SDK || !REGISTRY) {
-    console.error("[hermes-avatar] Hermes plugin SDK/registry is unavailable.");
-    return;
-  }
-
-  const h = SDK.React.createElement;
-
-  function DigitalHumanBootstrapPage() {
-    return h(
-      "main",
-      {
-        className: "dh2-page",
-        role: "status",
-        "aria-live": "polite",
-        "aria-busy": "true",
-      },
-      h(
-        "header",
-        { className: "dh2-header" },
-        h(
-          "div",
-          null,
-          h("div", { className: "dh2-kicker" }, "HERMES // DIGITAL HUMAN"),
-          h("h1", null, "Digital Human"),
-          h("p", null, "Loading avatar, voice and behavior runtime..."),
-        ),
-      ),
-    );
-  }
-
-  function DigitalHumanLoadErrorPage() {
-    const failure = runtimeFailure || {};
-    return h(
-      "main",
-      {
-        className: "dh2-page",
-        role: "alert",
-        "aria-live": "assertive",
-        "aria-busy": "false",
-      },
-      h(
-        "header",
-        { className: "dh2-header" },
-        h(
-          "div",
-          null,
-          h("div", { className: "dh2-kicker" }, "HERMES // DIGITAL HUMAN"),
-          h("h1", null, "Digital Human"),
-          h("p", null, "The interactive avatar runtime could not be started."),
-          h(
-            "p",
-            { className: "dh2-error", "data-runtime-stage": failure.stage || "runtime" },
-            `${failure.stage || "Runtime"}: ${failure.message || "Unknown loading error"}`,
-          ),
-          h(
-            "button",
-            {
-              type: "button",
-              className: "dh2-button",
-              onClick: () => window.location.reload(),
-            },
-            "RETRY DIGITAL HUMAN",
-          ),
-        ),
-      ),
-    );
-  }
-
-  function showRuntimeLoadError(stage, error) {
-    runtimeFailure = {
-      stage,
-      message: error instanceof Error ? error.message : String(error || "Load failed"),
-    };
-    console.error(`[hermes-avatar] ${stage} failed`, error);
-    REGISTRY.register("hermes-avatar", DigitalHumanLoadErrorPage);
-  }
-
-  // The dashboard validates plugin registration in the first microtask after
-  // this entry script loads. Register a lightweight page synchronously, then
-  // avatar-v4.js replaces it with the full DigitalHumanPage when ready.
-  REGISTRY.register("hermes-avatar", DigitalHumanBootstrapPage);
-
-  function normalizeBasePath(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    const withLead = raw.startsWith("/") ? raw : `/${raw}`;
-    return withLead.replace(/\/+$/, "");
-  }
-
-  function pluginAssetUrl(fileName) {
-    if (ENTRY_SCRIPT_URL) {
-      try {
-        const entry = new URL(ENTRY_SCRIPT_URL, window.location.href);
-        const resolved = new URL(fileName, entry);
-        // Preserve the host loader's plugin-version revision on every child
-        // asset. Otherwise a fresh entry can execute stale avatar/renderer/CSS
-        // from an earlier Railway/browser/CDN cache generation.
-        if (entry.search) resolved.search = entry.search;
-        return resolved.toString();
-      } catch {
-        // Fall through to the injected dashboard base path.
-      }
-    }
-
-    const basePath = normalizeBasePath(window.__HERMES_BASE_PATH__);
-    return `${basePath}/dashboard-plugins/hermes-avatar/dist/${fileName}`;
-  }
-
-  const AVATAR_ENTRY = pluginAssetUrl("avatar-v4.js");
-  const HUMAN_BEHAVIOR_ENTRY = pluginAssetUrl("human-behavior-engine.js");
-  const RENDERER_ENTRY = pluginAssetUrl("three-avatar-renderer.js");
-  const REALISTIC_STYLE = pluginAssetUrl("realistic.css");
-
-  // Legacy root-path examples retained for smoke-test/documentation compatibility:
-  // /dashboard-plugins/hermes-avatar/dist/avatar-v4.js
-  // /dashboard-plugins/hermes-avatar/dist/human-behavior-engine.js
 
   function normalize(value) {
     return String(value || "").trim().toLowerCase();
@@ -138,6 +13,7 @@
 
   function voiceScore(voice, arabic) {
     if (!voice) return -Infinity;
+
     const name = normalize(voice.name);
     const lang = normalize(voice.lang);
     const targetPrefix = arabic ? "ar" : "en";
@@ -166,288 +42,59 @@
 
   function chooseFemaleVoice(text) {
     if (!("speechSynthesis" in window)) return null;
+
     const arabic = isArabicText(text);
     const voices = window.speechSynthesis.getVoices() || [];
     if (!voices.length) return null;
 
     return voices
       .map(voice => ({ voice, score: voiceScore(voice, arabic) }))
-      .sort((a, b) => b.score - a.score)[0]?.voice || null;
+      .sort((left, right) => right.score - left.score)[0]?.voice || null;
   }
 
   function installFemaleVoicePatch() {
     if (!("speechSynthesis" in window) || window[PATCH_FLAG]) return;
-    window[PATCH_FLAG] = true;
 
     const synth = window.speechSynthesis;
     const nativeSpeak = synth.speak.bind(synth);
 
-    synth.speak = function hermesFemaleSpeak(utterance) {
-      try {
-        const text = utterance?.text || "";
-        const selected = chooseFemaleVoice(text);
-        const arabic = isArabicText(text);
+    try {
+      synth.speak = function hermesFemaleSpeak(utterance) {
+        try {
+          const text = utterance?.text || "";
+          const selected = chooseFemaleVoice(text);
+          const arabic = isArabicText(text);
 
-        if (selected) {
-          utterance.voice = selected;
-          utterance.lang = selected.lang || (arabic ? "ar-SA" : "en-US");
-        } else if (!utterance.lang) {
-          utterance.lang = arabic ? "ar-SA" : "en-US";
+          if (selected) {
+            utterance.voice = selected;
+            utterance.lang = selected.lang || (arabic ? "ar-SA" : "en-US");
+          } else if (!utterance.lang) {
+            utterance.lang = arabic ? "ar-SA" : "en-US";
+          }
+
+          utterance.rate = arabic ? 0.94 : 0.97;
+          utterance.pitch = 1.04;
+          utterance.volume = 1;
+        } catch (error) {
+          console.warn("[hermes-avatar] female voice selection failed", error);
         }
+        return nativeSpeak(utterance);
+      };
+      window[PATCH_FLAG] = true;
+    } catch (error) {
+      console.warn("[hermes-avatar] browser does not allow speechSynthesis patching", error);
+      return;
+    }
 
-        utterance.rate = arabic ? 0.94 : 0.97;
-        utterance.pitch = 1.04;
-        utterance.volume = 1;
-      } catch (error) {
-        console.warn("[hermes-avatar] female voice selection failed", error);
-      }
-      return nativeSpeak(utterance);
-    };
-  }
-
-  function getComposerControls() {
-    const composer = document.querySelector(".dh2-chat .dh2-composer__actions");
-    if (!composer) return { composer: null, callButton: null, voiceButton: null };
-    const iconButtons = Array.from(composer.querySelectorAll(".dh2-icon"));
-    return {
-      composer,
-      callButton: iconButtons[0] || null,
-      voiceButton: iconButtons[1] || null,
-    };
-  }
-
-  function refreshVoiceCallButton() {
-    const { callButton } = getComposerControls();
-    if (!callButton) return;
-
-    const live = callButton.classList.contains("is-live");
-    callButton.classList.add("dh2-call");
-    callButton.setAttribute("aria-label", live ? "End voice call" : "Start voice call with automatic spoken reply");
-    callButton.setAttribute("title", live ? "End voice call" : "Start voice call — Hermes replies by voice automatically");
-
-    const label = live ? "END CALL" : "VOICE CALL";
-    if (callButton.textContent !== label) callButton.textContent = label;
-  }
-
-  function voiceOutputIsMuted(voiceButton) {
-    if (!voiceButton) return false;
-    return normalize(voiceButton.textContent) === "mute"
-      || voiceButton.getAttribute("aria-pressed") === "false";
-  }
-
-  function installAutomaticVoiceReplyForCalls() {
-    if (window[CALL_AUTO_REPLY_FLAG]) return;
-    window[CALL_AUTO_REPLY_FLAG] = true;
-
-    document.addEventListener("click", event => {
-      const { callButton, voiceButton } = getComposerControls();
-      if (!callButton || event.target !== callButton) return;
-      if (callButton.dataset.hermesVoiceReplay === "1") {
-        delete callButton.dataset.hermesVoiceReplay;
-        return;
-      }
-
-      if (callButton.classList.contains("is-live")) return;
-
-      if (voiceOutputIsMuted(voiceButton)) {
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-        voiceButton.click();
-        window.setTimeout(() => {
-          const latest = getComposerControls().callButton;
-          if (!latest || latest.disabled) return;
-          latest.dataset.hermesVoiceReplay = "1";
-          latest.click();
-        }, 0);
-      }
-    }, true);
-  }
-
-  function installVoiceCallUX() {
-    if (window[CALL_UX_FLAG]) return;
-    window[CALL_UX_FLAG] = true;
-
-    // Two observers instead of one document-wide one:
-    //
-    // - `mountWatcher` only watches childList mutations (cheap, no attribute
-    //   filter) so it can notice the composer appearing/disappearing as the
-    //   Digital Human page mounts/unmounts, and hand off to...
-    // - `scopedObserver`, attached to the composer itself once it exists,
-    //   which is the only one that watches class/disabled attributes.
-    //
-    // Previously a single observer watched class/disabled attribute changes
-    // across the *entire* document, forever, for the whole session. Every
-    // unrelated re-render anywhere in the app (streaming chat replies,
-    // session list updates, button disabled-state toggles, ...) re-ran a
-    // full DOM query + write pass, and the cost grew with the app's DOM size
-    // (thousands of messages/sessions) — compounding into multi-hundred-ms
-    // 'message' handler violations that eventually starved the main thread
-    // and made the whole tab unresponsive.
-    let scopedObserver = null;
-    // Tracks the actual composer node the scoped observer is attached to, so
-    // a same-tick swap (e.g. ProfileKeyedRoutes remounting the whole routed
-    // tree in one commit when the active profile changes) is detected by
-    // identity rather than by whether `scopedObserver` merely exists. Without
-    // this, a remount that removes the old composer and inserts a new one in
-    // the same mutation batch left `scopedObserver` dangling on the detached
-    // old node — attaching neither happened (scopedObserver was still
-    // truthy) nor did detaching (composer was still truthy), so the new
-    // call button's is-live toggles silently stopped being observed.
-    let observedComposer = null;
-
-    const attachScoped = composer => {
-      scopedObserver?.disconnect();
-      observedComposer = composer;
-      scopedObserver = new MutationObserver(() => refreshVoiceCallButton());
-      scopedObserver.observe(composer, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ["class", "disabled"],
-      });
-    };
-
-    const detachScoped = () => {
-      scopedObserver?.disconnect();
-      scopedObserver = null;
-      observedComposer = null;
-    };
-
-    const mountWatcher = new MutationObserver(() => {
-      const { composer } = getComposerControls();
-      if (composer === observedComposer) return;
-      if (composer) {
-        attachScoped(composer);
-        refreshVoiceCallButton();
-      } else {
-        detachScoped();
-      }
+    synth.getVoices();
+    synth.addEventListener?.("voiceschanged", () => {
+      synth.getVoices();
     });
-    mountWatcher.observe(document.body, { childList: true, subtree: true });
-
-    const { composer } = getComposerControls();
-    if (composer) attachScoped(composer);
-    refreshVoiceCallButton();
   }
 
-  function ensureStylesheet(href) {
-    const exists = Array.from(document.styleSheets || []).some(sheet => sheet.href === href)
-      || Boolean(document.querySelector(`link[href="${href}"]`));
-    if (exists) return;
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = href;
-    link.setAttribute("data-hermes-avatar-base-style", "1");
-    document.head.appendChild(link);
-  }
-
-  function findScript(src) {
-    return Array.from(document.scripts).find(script => script.src === src) || null;
-  }
-
-  function appendScript(src, ready, onLoad, onError, timeoutMs = SCRIPT_TIMEOUT_MS) {
-    if (ready()) {
-      onLoad();
-      return;
-    }
-
-    let settled = false;
-    const timer = window.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      onError(new Error(`Timed out loading ${src} after ${timeoutMs} ms`));
-    }, timeoutMs);
-
-    const loaded = () => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      onLoad();
-    };
-    const failed = error => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      onError(error instanceof Error ? error : new Error(`Unable to load ${src}`));
-    };
-
-    const existing = findScript(src);
-    if (existing) {
-      if (existing.dataset.hermesLoaded === "1") {
-        window.clearTimeout(timer);
-        settled = true;
-        if (ready()) onLoad();
-        else onError(new Error(`Loaded script did not expose its runtime: ${src}`));
-        return;
-      }
-      existing.addEventListener("load", loaded, { once: true });
-      existing.addEventListener("error", failed, { once: true });
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = src;
-    script.async = true;
-    script.onload = () => {
-      script.dataset.hermesLoaded = "1";
-      loaded();
-    };
-    script.onerror = event => {
-      script.dataset.hermesLoaded = "0";
-      failed(event);
-    };
-    document.body.appendChild(script);
-  }
-
-  function loadAvatarEntry() {
-    const startAvatar = () => {
-      appendScript(
-        AVATAR_ENTRY,
-        () => Boolean(window[AVATAR_READY_FLAG]),
-        () => {
-          window[AVATAR_READY_FLAG] = true;
-          refreshVoiceCallButton();
-        },
-        error => showRuntimeLoadError("Avatar runtime", error),
-      );
-    };
-
-    const startRenderer = () => {
-      appendScript(
-        RENDERER_ENTRY,
-        () => Boolean(window.__HERMES_AVATAR_RENDERER__?.ThreeAvatarRenderer),
-        startAvatar,
-        error => {
-          console.warn("[hermes-avatar] renderer preload failed; avatar runtime will retry", error);
-          startAvatar();
-        },
-      );
-    };
-
-    ensureStylesheet(REALISTIC_STYLE);
-
-    appendScript(
-      HUMAN_BEHAVIOR_ENTRY,
-      () => Boolean(window.__HERMES_HUMAN_BEHAVIOR__),
-      startRenderer,
-      error => {
-        console.warn("[hermes-avatar] human behavior engine unavailable; continuing with base motion", error);
-        startRenderer();
-      },
-    );
-  }
-
+  // This sidecar owns only voice selection. Voice-call state, buttons, chat,
+  // avatar loading and behavior loading remain owned by their React/runtime
+  // composition layers. In particular, there is deliberately no DOM polling,
+  // MutationObserver, querySelector loop, or document-wide mutation handler.
   installFemaleVoicePatch();
-  installVoiceCallUX();
-  installAutomaticVoiceReplyForCalls();
-
-  if ("speechSynthesis" in window) {
-    window.speechSynthesis.getVoices();
-    window.speechSynthesis.addEventListener?.("voiceschanged", () => {
-      window.speechSynthesis.getVoices();
-    });
-  }
-
-  loadAvatarEntry();
 })();

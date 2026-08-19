@@ -1,6 +1,7 @@
 (function () {
   "use strict";
 
+  const OWN_SCRIPT_URL = document.currentScript?.src || "";
   const SDK = window.__HERMES_PLUGIN_SDK__;
   const REGISTRY = window.__HERMES_PLUGINS__;
   if (!SDK || !REGISTRY) return;
@@ -24,7 +25,11 @@
     error: "Needs attention",
   });
   const MODES = Object.freeze({ HUMAN: "human", HOLOGRAM: "hologram" });
-  const RENDERER_SCRIPT = "/dashboard-plugins/hermes-avatar/dist/three-avatar-renderer.js";
+  // Mirrors the entry script's own fail-open timeout (digital-human-entry.js).
+  // The renderer module/WebGL init chain is otherwise unbounded: a stalled
+  // chunk fetch or GLB download would leave the page stuck on "LOADING 3D"
+  // forever with no way out. Chat and voice must stay usable either way.
+  const RENDERER_INIT_TIMEOUT_MS = 12000;
   const DEFAULT_MAX_AVATAR_BYTES = 25 * 1024 * 1024;
   let rendererModulePromise = null;
 
@@ -47,6 +52,28 @@
     }
   }
 
+  function rendererScriptUrl() {
+    // Mirrors digital-human-entry.js's assetUrl(): resolve relative to our
+    // own <script> tag (so a non-root dashboard base path still works) and
+    // carry over the entry's manifest-version/cache-epoch query so a browser
+    // or CDN can't keep serving a stale renderer after a deploy — this file
+    // was previously loaded from a bare hardcoded path with no cache-busting
+    // query at all, unlike every other asset in this plugin's chain.
+    if (OWN_SCRIPT_URL) {
+      try {
+        const own = new URL(OWN_SCRIPT_URL, window.location.href);
+        const resolved = new URL("three-avatar-renderer.js", own);
+        if (own.search) resolved.search = own.search;
+        return resolved.toString();
+      } catch {
+        // Fall through to the dashboard base path.
+      }
+    }
+    const raw = String(window.__HERMES_BASE_PATH__ || "").trim();
+    const base = raw ? `/${raw.replace(/^\/+|\/+$/g, "")}` : "";
+    return `${base}/dashboard-plugins/hermes-avatar/dist/three-avatar-renderer.js`;
+  }
+
   function loadRendererModule() {
     if (window.__HERMES_AVATAR_RENDERER__?.ThreeAvatarRenderer) {
       return Promise.resolve(window.__HERMES_AVATAR_RENDERER__);
@@ -54,7 +81,7 @@
     if (rendererModulePromise) return rendererModulePromise;
     rendererModulePromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = RENDERER_SCRIPT;
+      script.src = rendererScriptUrl();
       script.async = true;
       script.onload = () => {
         if (window.__HERMES_AVATAR_RENDERER__?.ThreeAvatarRenderer) {
@@ -458,15 +485,29 @@
       if (!canvasRef.current) return undefined;
       let active = true;
       let renderer = null;
+      let timedOut = false;
+
+      const initTimeout = window.setTimeout(() => {
+        timedOut = true;
+        if (active) {
+          console.warn(
+            `[hermes-avatar] renderer init timed out after ${RENDERER_INIT_TIMEOUT_MS}ms; falling back to text/voice only`,
+          );
+          setReady(false);
+          setRendererStatus("unavailable");
+        }
+        // In case init() lands after the timeout already gave up on it.
+        renderer?.destroy();
+      }, RENDERER_INIT_TIMEOUT_MS);
 
       loadRendererModule()
         .then(module => {
-          if (!active || !canvasRef.current) return undefined;
+          if (!active || timedOut || !canvasRef.current) return undefined;
           renderer = new module.ThreeAvatarRenderer(canvasRef.current, controller, {
             mode,
             modelUrl,
             onStatus: status => {
-              if (active) {
+              if (active && !timedOut) {
                 setRendererStatus(status);
                 setReady(true);
               }
@@ -475,9 +516,14 @@
           rendererRef.current = renderer;
           return renderer.init();
         })
+        .then(() => {
+          if (timedOut) renderer?.destroy();
+          else window.clearTimeout(initTimeout);
+        })
         .catch(error => {
+          window.clearTimeout(initTimeout);
           console.warn("[hermes-avatar] renderer failed", error);
-          if (active) {
+          if (active && !timedOut) {
             setReady(false);
             setRendererStatus("unavailable");
           }
@@ -485,6 +531,7 @@
 
       return () => {
         active = false;
+        window.clearTimeout(initTimeout);
         renderer?.destroy();
         if (rendererRef.current === renderer) rendererRef.current = null;
       };

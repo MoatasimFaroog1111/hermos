@@ -169,10 +169,7 @@ function findPreviousArabic(
   return undefined
 }
 
-function findNextArabic(
-  characters: ClusteredChar[],
-  index: number
-): { index: number; forms: ArabicForms } | undefined {
+function findNextArabic(characters: ClusteredChar[], index: number): { index: number; forms: ArabicForms } | undefined {
   for (let candidate = index + 1; candidate < characters.length; candidate++) {
     const base = getArabicBase(characters[candidate]!.value)
 
@@ -207,14 +204,10 @@ function shapeArabic(characters: ClusteredChar[]): ClusteredChar[] {
     const forms = ARABIC_FORMS.get(base.codePoint)!
     const previous = findPreviousArabic(characters, index)
     const next = findNextArabic(characters, index)
-    const joinsPrevious =
-      Boolean(previous) &&
-      canJoinPrevious(forms) &&
-      canJoinNext(previous!.forms)
-    const joinsNext =
-      Boolean(next) &&
-      canJoinNext(forms) &&
-      canJoinPrevious(next!.forms)
+
+    const joinsPrevious = Boolean(previous) && canJoinPrevious(forms) && canJoinNext(previous!.forms)
+
+    const joinsNext = Boolean(next) && canJoinNext(forms) && canJoinPrevious(next!.forms)
 
     const shaped =
       joinsPrevious && joinsNext
@@ -231,10 +224,7 @@ function shapeArabic(characters: ClusteredChar[]): ClusteredChar[] {
 
     return {
       ...character,
-      value:
-        character.value.slice(0, base.start) +
-        shaped +
-        character.value.slice(base.start + base.length)
+      value: character.value.slice(0, base.start) + shaped + character.value.slice(base.start + base.length)
     }
   })
 }

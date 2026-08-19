@@ -20,7 +20,7 @@ def test_manifest_routes_through_deterministic_entry():
 
     assert manifest["entry"] == "dist/digital-human-entry.js"
     assert manifest["api"] == "plugin_api_entry.py"
-    assert manifest["version"] == "0.8.7"
+    assert manifest["version"] == "0.8.9"
 
 
 def test_wrapper_registers_synchronously_before_async_loading():
@@ -28,14 +28,16 @@ def test_wrapper_registers_synchronously_before_async_loading():
     register = 'REGISTRY.register("hermes-avatar", DigitalHumanBootstrapPage)'
     policy = 'assetUrl("deterministic-avatar-policy.js")'
     voice = 'assetUrl("female-voice-entry.js")'
+    behavior = 'assetUrl("human-behavior-engine.js")'
     avatar = 'assetUrl("avatar-v4.js")'
 
     assert register in source
     assert policy in source
     assert voice in source
+    assert behavior in source
     assert avatar in source
     assert source.index(register) < source.index("loadScript(policyEntry)")
-    assert source.index(policy) < source.index(voice) < source.index(avatar)
+    assert source.index(policy) < source.index(voice) < source.index(behavior) < source.index(avatar)
 
 
 def test_wrapper_does_not_gate_primary_avatar_on_optional_sidecars():
@@ -43,9 +45,11 @@ def test_wrapper_does_not_gate_primary_avatar_on_optional_sidecars():
 
     assert "SCRIPT_TIMEOUT_MS = 12000" in source
     assert "loadScript(voiceEntry).catch" in source
+    assert "loadScript(behaviorEntry).catch" in source
     assert ".then(() => loadScript(avatarEntry))" in source
     assert 'window[AVATAR_READY_FLAG] = true' in source
     assert "female voice runtime failed" in source
+    assert "human behavior engine unavailable; continuing with base motion" in source
 
 
 def test_plugin_asset_revision_propagates_from_host_to_nested_runtime():
@@ -59,14 +63,19 @@ def test_plugin_asset_revision_propagates_from_host_to_nested_runtime():
     assert "loadedScripts.current.delete(scriptSrc)" in host
 
     assert "if (entry.search) resolved.search = entry.search;" in wrapper
-    assert "if (entry.search) resolved.search = entry.search;" in voice
     for filename in (
-        "avatar-v4.js",
+        "deterministic-avatar-policy.js",
+        "female-voice-entry.js",
         "human-behavior-engine.js",
-        "three-avatar-renderer.js",
-        "realistic.css",
+        "avatar-v4.js",
     ):
-        assert f'pluginAssetUrl("{filename}")' in voice
+        assert f'assetUrl("{filename}")' in wrapper
+
+    # The voice sidecar is intentionally pure: it no longer owns nested asset
+    # loading or DOM lifecycle. The composition root above is the single owner.
+    assert "pluginAssetUrl" not in voice
+    assert "MutationObserver" not in voice
+    assert "querySelector" not in voice
 
 
 def test_animation_policy_never_uses_random_clip_selection():

@@ -65,7 +65,7 @@ def test_manifest_points_to_deterministic_runtime_assets():
     manifest = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
 
     assert manifest["name"] == "hermes-avatar"
-    assert manifest["version"] == "0.8.6"
+    assert manifest["version"] == "0.8.7"
     assert manifest["tab"]["path"] == "/digital-human"
     assert manifest["entry"] == "dist/digital-human-entry.js"
     assert manifest["css"] == "dist/avatar-v4.css"

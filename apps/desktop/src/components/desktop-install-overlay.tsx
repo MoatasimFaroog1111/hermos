@@ -589,7 +589,7 @@ export function DesktopInstallOverlay({ enabled = true }: DesktopInstallOverlayP
           )}
 
           {failed && state.error && (
-            <div className="mb-4 flex items-start gap-2 text-sm">
+            <div className="mb-4 flex items-start gap-2 text-sm" role="alert">
               <ErrorIcon className="mt-0.5 shrink-0" size="1rem" />
               <div className="min-w-0">
                 <div className="font-medium text-destructive">{copy.error}</div>

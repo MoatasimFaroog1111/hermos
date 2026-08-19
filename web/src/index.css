@@ -245,6 +245,26 @@ code { font-size: 0.875rem; }
     2px 2px;
 }
 
+/* Respect the OS-level motion preference: shrink every CSS transition and
+   keyframe animation (toast/dialog/tooltip entrances, spinners, etc.) down
+   to effectively instant instead of skipping the state change outright, so
+   content driven by animation end-states still resolves correctly. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Indeterminate loading spinners stay exempt: freezing them mid-frame
+     reads as a stuck/broken UI rather than a motion-safety improvement. */
+  [class*="animate-spin"] {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
 /* RTL support — Arabic and any future right-to-left locale. The i18n provider
    sets `dir` on <html>; Tailwind v4's logical spacing utilities (ms-/me-,
    ps-/pe-) and logical properties then flip automatically. Scoped so the

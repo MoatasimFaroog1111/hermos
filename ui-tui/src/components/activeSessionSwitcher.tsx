@@ -18,6 +18,7 @@ import { ModelPicker } from './modelPicker.js'
 import { windowOffset } from './overlayControls.js'
 import { clampOverlayWidth, listRowStyle } from './overlayPrimitives.js'
 import { TextInput } from './textInput.js'
+import { Spinner } from './thinking.js'
 
 const VISIBLE = 12
 const MIN_WIDTH = 64
@@ -671,7 +672,11 @@ export function ActiveSessionSwitcher({
   }
 
   if (loading) {
-    return <Text color={t.color.muted}>loading sessions…</Text>
+    return (
+      <Text color={t.color.muted}>
+        <Spinner color={t.color.accent} /> loading sessions…
+      </Text>
+    )
   }
 
   // The "+ new" row (sel 0) is pinned at the top so it's always visible; the
@@ -694,7 +699,7 @@ export function ActiveSessionSwitcher({
       </Text>
       <Text color={t.color.muted}>{sessionsCountLabel(items.length, history.length)}</Text>
 
-      {err && <Text color={t.color.label}>error: {err}</Text>}
+      {err && <Text color={t.color.error}>error: {err}</Text>}
 
       <Box backgroundColor={newRowStyle?.backgroundColor} flexDirection="row" onClick={handleRowClick(0)} width="100%">
         <Text bold={newSelectedRow} color={newRowTextColor ?? t.color.muted}>

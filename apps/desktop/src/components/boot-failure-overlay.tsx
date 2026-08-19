@@ -322,7 +322,10 @@ export function BootFailureOverlay() {
         </div>
 
         <div className="grid gap-4 p-5 pt-0">
-          <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-xs text-destructive">
+          <div
+            className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-xs text-destructive"
+            role="alert"
+          >
             {sshFailureMessage(connectionConfig, boot.error, t.settings.gateway)}
           </div>
 

@@ -7,6 +7,7 @@ import type { Theme } from '../theme.js'
 
 import { OverlayHint, windowItems } from './overlayControls.js'
 import { chipRowProps, clampOverlayWidth } from './overlayPrimitives.js'
+import { Spinner } from './thinking.js'
 
 const VISIBLE = 10
 const MIN_WIDTH = 40
@@ -120,13 +121,17 @@ export function PetPicker({ gw, maxWidth, onClose, t }: PetPickerProps) {
   })
 
   if (loading) {
-    return <Text color={t.color.muted}>loading pets…</Text>
+    return (
+      <Text color={t.color.muted}>
+        <Spinner color={t.color.accent} /> loading pets…
+      </Text>
+    )
   }
 
   if (err && !gallery) {
     return (
       <Box flexDirection="column" width={width}>
-        <Text color={t.color.label}>error: {err}</Text>
+        <Text color={t.color.error}>error: {err}</Text>
         <OverlayHint t={t}>Esc cancel</OverlayHint>
       </Box>
     )
@@ -171,7 +176,7 @@ export function PetPicker({ gw, maxWidth, onClose, t }: PetPickerProps) {
 
       {offset + VISIBLE < view.length && <Text color={t.color.muted}> ↓ {view.length - offset - VISIBLE} more</Text>}
 
-      {err ? <Text color={t.color.label}>error: {err}</Text> : null}
+      {err ? <Text color={t.color.error}>error: {err}</Text> : null}
       {busy ? <Text color={t.color.accent}>adopting…</Text> : null}
 
       <OverlayHint t={t}>↑/↓ select · Enter adopt · type to filter · Esc cancel</OverlayHint>

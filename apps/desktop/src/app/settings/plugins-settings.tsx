@@ -53,7 +53,7 @@ function PluginRow({ record }: { record: PluginRecord }) {
         <div className="flex items-center justify-end gap-2">
           {record.file && (
             <Tip label={p.reveal}>
-              <Button onClick={() => reveal(record.file!)} size="icon" variant="ghost">
+              <Button aria-label={p.reveal} onClick={() => reveal(record.file!)} size="icon" variant="ghost">
                 <Codicon name="folder-opened" size="0.85rem" />
               </Button>
             </Tip>

@@ -13,7 +13,7 @@ import { patchOverlayState } from '../../overlayStore.js'
 import type { SlashCommand, SlashRunCtx } from '../types.js'
 
 const UNCONFIRMED_CHARGE_MESSAGE =
-  '🟡 Your last charge’s outcome is unconfirmed — check your balance/history before retrying.'
+  '⚠ Your last charge’s outcome is unconfirmed — check your balance/history before retrying.'
 
 type Sys = (text: string) => void
 
@@ -93,7 +93,7 @@ const renderBillingError = (
       break
 
     case 'upgrade_cap_exceeded':
-      sys('🔴 Daily plan-change limit reached (5 per org) — try again tomorrow, or manage this on the portal.')
+      sys('✕ Daily plan-change limit reached (5 per org) — try again tomorrow, or manage this on the portal.')
 
       break
 
@@ -105,7 +105,7 @@ const renderBillingError = (
       break
 
     case 'idempotency_conflict':
-      sys('🔴 That charge key was already used for a different amount. Start a fresh top-up.')
+      sys('✕ That charge key was already used for a different amount. Start a fresh top-up.')
 
       break
 
@@ -121,8 +121,8 @@ const renderBillingError = (
       const remaining = env.payload?.remainingUsd
       sys(
         remaining != null
-          ? `🔴 Monthly spend cap reached — $${remaining} headroom left.`
-          : '🔴 Monthly spend cap reached.'
+          ? `✕ Monthly spend cap reached — $${remaining} headroom left.`
+          : '✕ Monthly spend cap reached.'
       )
 
       break
@@ -133,20 +133,20 @@ const renderBillingError = (
       // 429 throttle OR 503 gate-fail-closed: NOT a payment failure, NOT a
       // revoke. Back off and tell the user to retry.
       const mins = env.retry_after ? ` (try again in ~${Math.max(1, Math.round(env.retry_after / 60))} min)` : ''
-      sys(`🟡 Too many charges right now${mins}. This isn't a payment failure.`)
+      sys(`⚠ Too many charges right now${mins}. This isn't a payment failure.`)
 
       break
     }
 
     case 'stripe_unavailable': {
       const mins = env.retry_after ? ` (try again in ~${Math.max(1, Math.round(env.retry_after / 60))} min)` : ''
-      sys(`🟡 Stripe is having trouble right now — try again shortly${mins}.`)
+      sys(`⚠ Stripe is having trouble right now — try again shortly${mins}.`)
 
       break
     }
 
     default:
-      sys(`🔴 ${env.message || env.error || 'Billing request failed.'}`)
+      sys(`✕ ${env.message || env.error || 'Billing request failed.'}`)
   }
 
   if (portal) {
@@ -177,7 +177,7 @@ const pollCharge = (sys: Sys, ctx: SlashRunCtx, chargeId: string, portalUrl?: st
   const renderOutcome = (outcome: SettlementOutcome): void => {
     switch (outcome.kind) {
       case 'settled':
-        sys(`✅ ${outcome.status.amount_usd ? `$${outcome.status.amount_usd}` : 'Credits'} added.`)
+        sys(`✓ ${outcome.status.amount_usd ? `$${outcome.status.amount_usd}` : 'Credits'} added.`)
 
         return
 
@@ -187,7 +187,7 @@ const pollCharge = (sys: Sys, ctx: SlashRunCtx, chargeId: string, portalUrl?: st
         return
 
       case 'refused':
-        sys(`🔴 Could not check the charge: ${outcome.status.message || outcome.status.error || 'error'}`)
+        sys(`✕ Could not check the charge: ${outcome.status.message || outcome.status.error || 'error'}`)
 
         return
 
@@ -211,7 +211,7 @@ const pollCharge = (sys: Sys, ctx: SlashRunCtx, chargeId: string, portalUrl?: st
 
       case 'timed_out':
         sys(
-          '🟡 Still processing after 5 minutes — this is a timeout, not a failure. ' +
+          '⚠ Still processing after 5 minutes — this is a timeout, not a failure. ' +
             'Check /topup or the portal shortly.'
         )
 
@@ -255,27 +255,27 @@ const pollCharge = (sys: Sys, ctx: SlashRunCtx, chargeId: string, portalUrl?: st
 const renderChargeFailed = (sys: Sys, reason?: string | null, portalUrl?: string | null): void => {
   switch ((reason || '').trim()) {
     case 'authentication_required':
-      sys('🔴 Your bank requires verification (3DS). Complete it on the portal to finish this purchase.')
+      sys('✕ Your bank requires verification (3DS). Complete it on the portal to finish this purchase.')
 
       break
 
     case 'payment_method_expired':
-      sys('🔴 Your card has expired. Update it on the portal.')
+      sys('✕ Your card has expired. Update it on the portal.')
 
       break
 
     case 'card_declined':
-      sys('🔴 Your card was declined. Try another card on the portal.')
+      sys('✕ Your card was declined. Try another card on the portal.')
 
       break
 
     case 'processing_error':
-      sys("🔴 The charge didn't go through (processing_error).")
+      sys("✕ The charge didn't go through (processing_error).")
 
       break
 
     default:
-      sys(`🔴 The charge didn't go through (${reason || 'processing_error'}).`)
+      sys(`✕ The charge didn't go through (${reason || 'processing_error'}).`)
   }
 
   // Funnel to the portal after any failure (parity with cli.py _billing_portal_hint).

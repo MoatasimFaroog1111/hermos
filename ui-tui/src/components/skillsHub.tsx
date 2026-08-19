@@ -8,6 +8,7 @@ import type { Theme } from '../theme.js'
 import { OverlayHint, useOverlayKeys, windowItems, windowOffset } from './overlayControls.js'
 import { chipRowProps } from './overlayPrimitives.js'
 import { clampOverlayWidth } from './overlayPrimitives.js'
+import { Spinner } from './thinking.js'
 
 const VISIBLE = 12
 const MIN_WIDTH = 40
@@ -183,13 +184,17 @@ export function SkillsHub({ gw, maxWidth, onClose, t }: SkillsHubProps) {
   })
 
   if (loading) {
-    return <Text color={t.color.muted}>loading skills…</Text>
+    return (
+      <Text color={t.color.muted}>
+        <Spinner color={t.color.accent} /> loading skills…
+      </Text>
+    )
   }
 
   if (err && stage === 'category') {
     return (
       <Box flexDirection="column" width={width}>
-        <Text color={t.color.label}>error: {err}</Text>
+        <Text color={t.color.error}>error: {err}</Text>
         <OverlayHint t={t}>Esc/q cancel</OverlayHint>
       </Box>
     )
@@ -277,8 +282,12 @@ export function SkillsHub({ gw, maxWidth, onClose, t }: SkillsHubProps) {
       <Text color={t.color.muted}>{info?.category ?? selectedCat}</Text>
       {info?.description ? <Text color={t.color.text}>{info.description}</Text> : null}
       {info?.path ? <Text color={t.color.muted}>path: {info.path}</Text> : null}
-      {!info && !err ? <Text color={t.color.muted}>loading…</Text> : null}
-      {err ? <Text color={t.color.label}>error: {err}</Text> : null}
+      {!info && !err ? (
+        <Text color={t.color.muted}>
+          <Spinner color={t.color.accent} /> loading…
+        </Text>
+      ) : null}
+      {err ? <Text color={t.color.error}>error: {err}</Text> : null}
       {installing ? <Text color={t.color.accent}>installing…</Text> : null}
 
       <OverlayHint t={t}>i reinspect · x reinstall · Enter/Esc back · q close</OverlayHint>

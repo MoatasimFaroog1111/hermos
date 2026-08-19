@@ -7,6 +7,7 @@ import type { Theme } from '../theme.js'
 
 import { OverlayHint, useOverlayKeys, windowItems, windowOffset } from './overlayControls.js'
 import { chipRowProps, clampOverlayWidth } from './overlayPrimitives.js'
+import { Spinner } from './thinking.js'
 
 const VISIBLE = 12
 const MIN_WIDTH = 44
@@ -153,13 +154,17 @@ export function PluginsHub({ gw, maxWidth, onClose, t }: PluginsHubProps) {
   })
 
   if (loading) {
-    return <Text color={t.color.muted}>loading plugins…</Text>
+    return (
+      <Text color={t.color.muted}>
+        <Spinner color={t.color.accent} /> loading plugins…
+      </Text>
+    )
   }
 
   if (err && !rows.length) {
     return (
       <Box flexDirection="column" width={width}>
-        <Text color={t.color.label}>error: {err}</Text>
+        <Text color={t.color.error}>error: {err}</Text>
         <OverlayHint t={t}>Esc/q close</OverlayHint>
       </Box>
     )
@@ -225,7 +230,7 @@ export function PluginsHub({ gw, maxWidth, onClose, t }: PluginsHubProps) {
         <Text color={t.color.muted}> ↓ {labels.length - offset - VISIBLE} more</Text>
       )}
 
-      {err ? <Text color={t.color.label}>error: {err}</Text> : null}
+      {err ? <Text color={t.color.error}>error: {err}</Text> : null}
       {busy ? <Text color={t.color.accent}>updating…</Text> : null}
 
       <OverlayHint t={t}>↑/↓ select · Enter/Space toggle · Tab user/all · 1-9,0 quick · Esc/q close</OverlayHint>

@@ -161,7 +161,7 @@ def test_female_voice_entry_prefers_natural_female_voices_without_dom_observer()
     assert "loadAvatarEntry" not in source
 
 
-def test_v4_styles_preserve_base_ui_and_render_voice_call_from_react_state():
+def test_v4_styles_preserve_base_ui_and_style_react_owned_voice_call():
     source = (_PLUGIN_DIR / "dist" / "avatar-v4.css").read_text(encoding="utf-8")
 
     assert "/dashboard-plugins/hermes-avatar/dist/realistic.css" in source
@@ -169,10 +169,10 @@ def test_v4_styles_preserve_base_ui_and_render_voice_call_from_react_state():
     assert "flex-wrap: wrap" in source
     assert "flex-direction: column" in source
     assert "max-width: 390px" in source
-    assert ".dh2-chat .dh2-composer__actions > .dh2-icon:first-child" in source
-    assert 'content: "VOICE CALL"' in source
-    assert 'content: "END CALL"' in source
-    assert ".dh2-icon:first-child.is-live" in source
+    assert ".dh2-composer__actions .dh2-call" in source
+    assert ".dh2-composer__actions .dh2-call.is-live" in source
+    assert 'content: "VOICE CALL"' not in source
+    assert 'content: "END CALL"' not in source
 
 
 def test_v4_entry_registers_plugin_and_supports_secure_upload():
@@ -184,6 +184,18 @@ def test_v4_entry_registers_plugin_and_supports_secure_upload():
     assert "AvatarModelStore" in source
     assert "SDK.authedFetch" in source
     assert "LOAD GLB" in source
+
+
+def test_v4_voice_call_is_owned_by_react_and_forces_spoken_reply():
+    source = (_PLUGIN_DIR / "dist" / "avatar-v4.js").read_text(encoding="utf-8")
+
+    assert 'className: `dh2-icon dh2-call ${listening ? "is-live" : ""}`' in source
+    assert 'listening ? "END CALL" : "VOICE CALL"' in source
+    assert '"Start voice call with automatic spoken reply"' in source
+    assert 'setVoiceEnabled(true)' in source
+    assert 'send(text, { forceVoice: true })' in source
+    assert 'speakReply(reply, Boolean(options.forceVoice))' in source
+    assert '(!voiceEnabled && !forceVoice)' in source
 
 
 def test_three_renderer_uses_lazy_sdk_runtime_and_morph_targets():

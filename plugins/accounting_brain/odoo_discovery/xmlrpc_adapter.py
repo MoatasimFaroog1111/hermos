@@ -2,10 +2,13 @@
 
 No create/write/unlink/action_post/reconcile method is exposed. The private
 executor also enforces an explicit read-method allow-list as defense in depth.
+Every network call has a bounded timeout so a slow or unreachable Odoo server
+cannot leave a Railway worker thread blocked indefinitely.
 """
 
 from __future__ import annotations
 
+import os
 import xmlrpc.client
 from typing import Any, Sequence
 
@@ -25,21 +28,86 @@ _READ_METHODS = frozenset(
         "search_count",
     }
 )
+_DEFAULT_TIMEOUT_SECONDS = 60.0
+_MIN_TIMEOUT_SECONDS = 5.0
+_MAX_TIMEOUT_SECONDS = 300.0
+
+
+class _TimeoutTransport(xmlrpc.client.Transport):
+    """HTTP XML-RPC transport with a bounded socket timeout."""
+
+    def __init__(self, timeout_seconds: float) -> None:
+        super().__init__()
+        self._timeout_seconds = timeout_seconds
+
+    def make_connection(self, host: str):  # type: ignore[no-untyped-def]
+        connection = super().make_connection(host)
+        connection.timeout = self._timeout_seconds
+        return connection
+
+
+class _TimeoutSafeTransport(xmlrpc.client.SafeTransport):
+    """HTTPS XML-RPC transport with a bounded socket timeout."""
+
+    def __init__(self, timeout_seconds: float) -> None:
+        super().__init__()
+        self._timeout_seconds = timeout_seconds
+
+    def make_connection(self, host: str):  # type: ignore[no-untyped-def]
+        connection = super().make_connection(host)
+        connection.timeout = self._timeout_seconds
+        return connection
+
+
+def _read_timeout_seconds() -> float:
+    """Return the configured Odoo read timeout, clamped to safe bounds."""
+    raw = (os.environ.get("ODOO_READ_TIMEOUT_SECONDS") or "").strip()
+    if not raw:
+        return _DEFAULT_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_TIMEOUT_SECONDS
+    if value != value:  # NaN
+        return _DEFAULT_TIMEOUT_SECONDS
+    return min(max(value, _MIN_TIMEOUT_SECONDS), _MAX_TIMEOUT_SECONDS)
+
+
+def _transport_for(base_url: str, timeout_seconds: float):
+    if base_url.lower().startswith("https://"):
+        return _TimeoutSafeTransport(timeout_seconds)
+    return _TimeoutTransport(timeout_seconds)
 
 
 class OdooXmlRpcReadAdapter(OdooReadPort):
     """Production Odoo adapter restricted to non-mutating RPC methods."""
 
-    def __init__(self, credentials: OdooCredentials) -> None:
+    def __init__(
+        self,
+        credentials: OdooCredentials,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> None:
         self._credentials = credentials
         base_url = credentials.url.rstrip("/")
+        configured_timeout = (
+            _read_timeout_seconds()
+            if timeout_seconds is None
+            else min(
+                max(float(timeout_seconds), _MIN_TIMEOUT_SECONDS),
+                _MAX_TIMEOUT_SECONDS,
+            )
+        )
+        self._timeout_seconds = configured_timeout
         self._common = xmlrpc.client.ServerProxy(
             f"{base_url}/xmlrpc/2/common",
             allow_none=True,
+            transport=_transport_for(base_url, configured_timeout),
         )
         self._objects = xmlrpc.client.ServerProxy(
             f"{base_url}/xmlrpc/2/object",
             allow_none=True,
+            transport=_transport_for(base_url, configured_timeout),
         )
         self._uid: int | None = None
 

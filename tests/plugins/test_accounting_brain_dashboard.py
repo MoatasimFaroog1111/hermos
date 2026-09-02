@@ -7,11 +7,11 @@ from pydantic import ValidationError
 
 from hermes_cli.plugins import get_bundled_plugins_dir
 from hermes_cli.required_dashboard_plugins import validate_bundled_dashboard_plugin
-from plugins.accounting_brain.dashboard.plugin_api import (
-    AccountingSelectionError,
-    AuditRequest,
-    _resolve_company_scope,
-    status,
+from plugins.accounting_brain.dashboard.plugin_api import AuditRequest, status
+from plugins.accounting_brain.odoo_discovery.company_scope import (
+    OdooCompany,
+    OdooCompanyScopeError,
+    resolve_company_from_candidates,
 )
 
 
@@ -57,40 +57,40 @@ def test_accounting_dashboard_audit_sample_is_bounded() -> None:
 
 
 def test_single_company_scope_is_selected_automatically() -> None:
-    selected = _resolve_company_scope(
-        [{"id": 1, "name": "Guardian Technical Contracting"}],
+    selected = resolve_company_from_candidates(
+        (OdooCompany(id=1, name="Guardian Technical Contracting"),),
         None,
     )
 
-    assert selected == {"id": 1, "name": "Guardian Technical Contracting"}
+    assert selected == OdooCompany(id=1, name="Guardian Technical Contracting")
 
 
 def test_multi_company_scope_requires_explicit_selection() -> None:
-    companies = [
-        {"id": 1, "name": "Guardian Technical Contracting"},
-        {"id": 2, "name": "Another Company"},
-    ]
+    companies = (
+        OdooCompany(id=1, name="Guardian Technical Contracting"),
+        OdooCompany(id=2, name="Another Company"),
+    )
 
     with pytest.raises(
-        AccountingSelectionError,
+        OdooCompanyScopeError,
         match="Select one Odoo company",
     ):
-        _resolve_company_scope(companies, None)
+        resolve_company_from_candidates(companies, None)
 
 
 def test_multi_company_scope_accepts_only_accessible_company() -> None:
-    companies = [
-        {"id": 1, "name": "Guardian Technical Contracting"},
-        {"id": 2, "name": "Another Company"},
-    ]
+    companies = (
+        OdooCompany(id=1, name="Guardian Technical Contracting"),
+        OdooCompany(id=2, name="Another Company"),
+    )
 
-    assert _resolve_company_scope(companies, 2) == {
-        "id": 2,
-        "name": "Another Company",
-    }
+    assert resolve_company_from_candidates(companies, 2) == OdooCompany(
+        id=2,
+        name="Another Company",
+    )
 
     with pytest.raises(
-        AccountingSelectionError,
+        OdooCompanyScopeError,
         match="not accessible",
     ):
-        _resolve_company_scope(companies, 99)
+        resolve_company_from_candidates(companies, 99)

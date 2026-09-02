@@ -2,7 +2,8 @@
 
 The CLI is intentionally read-only against Odoo. It produces private local
 reports/datasets that can later feed document extraction, retrieval, and model
-training pipelines.
+training pipelines. Historical audit/export operations are fail-closed to one
+Odoo company through the same company-scope use case used by the dashboard.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,11 +25,17 @@ from plugins.accounting_brain.journal_training.historical_journals import (
     JournalSelection,
     load_historical_journal_batch,
 )
+from plugins.accounting_brain.odoo_discovery.company_scope import (
+    OdooCompany,
+    OdooCompanyScopeError,
+    list_accessible_companies,
+    resolve_company_scope,
+)
 from plugins.accounting_brain.odoo_discovery.contracts import (
     CORE_ACCOUNTING_MODELS,
     OdooConfigurationError,
-    OdooReadError,
     OdooCredentials,
+    OdooReadError,
 )
 from plugins.accounting_brain.odoo_discovery.discover import discover_odoo_schema
 from plugins.accounting_brain.odoo_discovery.xmlrpc_adapter import OdooXmlRpcReadAdapter
@@ -110,7 +118,7 @@ def accounting_command(args: argparse.Namespace) -> int:
             return _cmd_export(reader, args)
         print(f"Unknown accounting action: {action}")
         return 2
-    except (OdooConfigurationError, OdooReadError) as exc:
+    except (OdooConfigurationError, OdooReadError, OdooCompanyScopeError) as exc:
         print(f"Accounting Brain: {exc}")
         return 1
 
@@ -122,6 +130,7 @@ def _reader_from_environment() -> OdooXmlRpcReadAdapter:
 def _cmd_status(reader: OdooXmlRpcReadAdapter) -> int:
     uid = reader.authenticate()
     version = reader.version()
+    companies = list_accessible_companies(reader)
     payload = {
         "ok": True,
         "mode": "read_only",
@@ -129,6 +138,8 @@ def _cmd_status(reader: OdooXmlRpcReadAdapter) -> int:
         "server_version": version.get("server_version"),
         "server_serie": version.get("server_serie"),
         "protocol": version.get("protocol_version"),
+        "accessible_companies": [company.to_dict() for company in companies],
+        "company_selection_required": len(companies) > 1,
         "secrets_printed": False,
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
@@ -164,7 +175,7 @@ def _cmd_discover(reader: OdooXmlRpcReadAdapter, args: argparse.Namespace) -> in
 
 
 def _cmd_audit(reader: OdooXmlRpcReadAdapter, args: argparse.Namespace) -> int:
-    selection = _selection_from_args(args)
+    selection, selected_company = _scoped_selection(reader, _selection_from_args(args))
     batch = load_historical_journal_batch(reader, selection)
     report = build_training_audit(batch)
     report["selection_parameters"] = {
@@ -173,6 +184,7 @@ def _cmd_audit(reader: OdooXmlRpcReadAdapter, args: argparse.Namespace) -> int:
         "date_to": selection.date_to,
         "company_id": selection.company_id,
     }
+    report["selected_company"] = selected_company.to_dict()
     output = _output_path(
         getattr(args, "output", ""),
         category="reports",
@@ -183,6 +195,7 @@ def _cmd_audit(reader: OdooXmlRpcReadAdapter, args: argparse.Namespace) -> int:
         "ok": True,
         "mode": "read_only",
         "output": str(output),
+        "selected_company": selected_company.to_dict(),
         "sampled_posted_moves": report["selection"]["sampled_posted_moves"],
         "total_matching_posted_moves": report["selection"]["total_matching_posted_moves"],
         "grades": report["quality"]["grades"],
@@ -194,7 +207,7 @@ def _cmd_audit(reader: OdooXmlRpcReadAdapter, args: argparse.Namespace) -> int:
 
 
 def _cmd_export(reader: OdooXmlRpcReadAdapter, args: argparse.Namespace) -> int:
-    selection = _selection_from_args(args)
+    selection, selected_company = _scoped_selection(reader, _selection_from_args(args))
     batch = load_historical_journal_batch(reader, selection)
     output_arg = str(getattr(args, "output_dir", "") or "").strip()
     if output_arg:
@@ -216,6 +229,14 @@ def _cmd_export(reader: OdooXmlRpcReadAdapter, args: argparse.Namespace) -> int:
         download_attachments=bool(getattr(args, "download_attachments", False)),
         max_attachment_bytes=max_mb * 1024 * 1024,
     )
+    report["selected_company"] = selected_company.to_dict()
+    report["selection_parameters"] = {
+        "max_moves": selection.max_moves,
+        "date_from": selection.date_from,
+        "date_to": selection.date_to,
+        "company_id": selection.company_id,
+    }
+    sink.write_report("export-report.json", report)
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
@@ -224,7 +245,12 @@ def _add_history_selection_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-moves", type=int, default=1000)
     parser.add_argument("--date-from", default="", help="YYYY-MM-DD")
     parser.add_argument("--date-to", default="", help="YYYY-MM-DD")
-    parser.add_argument("--company-id", type=int, default=0)
+    parser.add_argument(
+        "--company-id",
+        type=int,
+        default=0,
+        help="Required when the Odoo connection can access multiple companies",
+    )
 
 
 def _selection_from_args(args: argparse.Namespace) -> JournalSelection:
@@ -234,6 +260,14 @@ def _selection_from_args(args: argparse.Namespace) -> JournalSelection:
         date_to=_optional_text(getattr(args, "date_to", "")),
         company_id=(int(getattr(args, "company_id", 0) or 0) or None),
     )
+
+
+def _scoped_selection(
+    reader: OdooXmlRpcReadAdapter,
+    selection: JournalSelection,
+) -> tuple[JournalSelection, OdooCompany]:
+    selected_company = resolve_company_scope(reader, selection.company_id)
+    return replace(selection, company_id=selected_company.id), selected_company
 
 
 def _output_path(raw: str, *, category: str, filename: str) -> Path:

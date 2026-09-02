@@ -1,0 +1,128 @@
+name: Railway Accounting Brain smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "plugins/accounting_brain/**"
+      - "docker/railway-start.sh"
+      - "hermes_cli/web_server.py"
+      - "hermes_cli/required_dashboard_plugins.py"
+      - ".github/workflows/railway-accounting-brain-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: read
+
+concurrency:
+  group: railway-accounting-brain-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check out Accounting Brain contract
+        uses: actions/checkout@v4
+
+      - name: Validate bundled Accounting Brain assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          manifest="plugins/accounting_brain/dashboard/manifest.json"
+          plugin_root="plugins/accounting_brain/dashboard"
+          expected_name="$(jq -r '.name' "${manifest}")"
+          expected_entry="$(jq -r '.entry' "${manifest}")"
+          expected_css="$(jq -r '.css // empty' "${manifest}")"
+          expected_api="$(jq -r '.api // empty' "${manifest}")"
+
+          test "${expected_name}" = "accounting_brain"
+          test -s "${plugin_root}/${expected_entry}"
+          test -s "${plugin_root}/${expected_api}"
+          if [[ -n "${expected_css}" ]]; then
+            test -s "${plugin_root}/${expected_css}"
+          fi
+
+          node --check "${plugin_root}/${expected_entry}"
+          python -m py_compile "${plugin_root}/${expected_api}"
+
+          # Production Railway must require Accounting Brain so stale durable
+          # volume settings cannot silently hide the application-owned tab.
+          grep -F 'hermes-avatar,accounting_brain' docker/railway-start.sh >/dev/null
+
+      - name: Wait for exact Railway deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          status_url="https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/status"
+          railway_context="Hermes - brilliant-expression"
+
+          for attempt in $(seq 1 60); do
+            curl -fsS \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${status_url}" > /tmp/commit-status.json
+
+            railway_state="$(jq -r --arg context "${railway_context}" '[.statuses[] | select(.context == $context)][0].state // "missing"' /tmp/commit-status.json)"
+            railway_description="$(jq -r --arg context "${railway_context}" '[.statuses[] | select(.context == $context)][0].description // ""' /tmp/commit-status.json)"
+
+            echo "attempt=${attempt} sha=${GITHUB_SHA} railway=${railway_state} ${railway_description}"
+
+            case "${railway_state}" in
+              success)
+                echo "Railway confirmed exact deployment ${GITHUB_SHA}."
+                exit 0
+                ;;
+              failure|error)
+                echo "Railway deployment failed for exact commit ${GITHUB_SHA}." >&2
+                cat /tmp/commit-status.json >&2
+                exit 1
+                ;;
+            esac
+
+            sleep 10
+          done
+
+          echo "Railway did not confirm exact commit ${GITHUB_SHA} before timeout." >&2
+          cat /tmp/commit-status.json >&2 2>/dev/null || true
+          exit 1
+
+      - name: Probe deployed Accounting Brain discovery contract
+        env:
+          BASE_URL: https://brilliant-expression-production-c3d8.up.railway.app
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          manifest="plugins/accounting_brain/dashboard/manifest.json"
+          expected_name="$(jq -r '.name' "${manifest}")"
+          expected_version="$(jq -r '.version' "${manifest}")"
+          expected_path="$(jq -r '.tab.path' "${manifest}")"
+          expected_entry="$(jq -r '.entry' "${manifest}")"
+
+          discovery_url="${BASE_URL}/api/dashboard/plugins?accounting_smoke=${GITHUB_SHA}"
+          discovery_code="$(curl -sS --max-time 15 -H 'Cache-Control: no-cache' -o /tmp/dashboard-plugins.json -w '%{http_code}' "${discovery_url}" || true)"
+
+          if [[ "${discovery_code}" != "200" ]]; then
+            echo "Dashboard discovery returned HTTP ${discovery_code}." >&2
+            cat /tmp/dashboard-plugins.json >&2 2>/dev/null || true
+            exit 1
+          fi
+
+          jq -e \
+            --arg name "${expected_name}" \
+            --arg version "${expected_version}" \
+            --arg path "${expected_path}" \
+            --arg entry "${expected_entry}" \
+            '.[] | select(.name == $name and .tab.path == $path and .entry == $entry and .version == $version and .source == "bundled")' \
+            /tmp/dashboard-plugins.json >/dev/null
+
+          echo "Accounting Brain exact Railway deployment is discoverable."
+          jq -c --arg name "${expected_name}" '.[] | select(.name == $name)' /tmp/dashboard-plugins.json

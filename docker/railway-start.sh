@@ -5,10 +5,12 @@ set -eu
 export HERMES_DASHBOARD_HOST="${HERMES_DASHBOARD_HOST:-0.0.0.0}"
 export HERMES_DASHBOARD_PORT="${PORT:-${HERMES_DASHBOARD_PORT:-9119}}"
 
-# Digital Human is an application-owned bundled dashboard extension in this
-# deployment. Declare it required so the post-s6 preflight validates its
-# runtime assets and clears stale persisted hide/disable state from /opt/data.
-export HERMES_REQUIRED_BUNDLED_DASHBOARD_PLUGINS="${HERMES_REQUIRED_BUNDLED_DASHBOARD_PLUGINS:-hermes-avatar}"
+# Application-owned bundled dashboard extensions in this deployment. Declare
+# them required so the post-s6 preflight validates runtime assets and clears
+# stale persisted hide/disable state from /opt/data. Accounting Brain remains
+# read-only against Odoo; requiring its dashboard presence does not grant any
+# additional Odoo permissions.
+export HERMES_REQUIRED_BUNDLED_DASHBOARD_PLUGINS="${HERMES_REQUIRED_BUNDLED_DASHBOARD_PLUGINS:-hermes-avatar,accounting_brain}"
 
 # The dashboard is the Railway web service's primary process. Keep the
 # supervised dashboard slot disabled so it cannot compete for the same port

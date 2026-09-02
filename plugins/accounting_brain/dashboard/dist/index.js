@@ -30,12 +30,18 @@
   function StatusCard({ status, loading, onRefresh }) {
     const connected = Boolean(status?.connected);
     const configured = Boolean(status?.configured);
+    const companies = Array.isArray(status?.companies) ? status.companies : [];
     const tone = connected ? "ok" : configured ? "warn" : "muted";
     const title = connected
       ? "Odoo connected — read only"
       : configured
         ? "Odoo configured, connection failed"
         : "Odoo secrets not configured";
+    const scope = !connected
+      ? "—"
+      : status?.company_selection_required
+        ? "Select one company"
+        : companies[0]?.name || "Unavailable";
 
     return h(
       "section",
@@ -61,12 +67,14 @@
             h(Metric, { label: "Mode", value: status.mode }),
             h(Metric, { label: "Odoo", value: status.server_version }),
             h(Metric, { label: "User ID", value: status.authenticated_user_id }),
+            h(Metric, { label: "Accessible companies", value: companies.length }),
+            h(Metric, { label: "Audit scope", value: scope }),
             h(Metric, { label: "Secrets exposed", value: status.secrets_exposed ? "YES" : "NO" }),
           )
         : h(
             "p",
             { className: "ab-help" },
-            "Configure ODOO_URL, ODOO_DB, ODOO_USERNAME and ODOO_API_KEY in Railway Variables. Credentials never enter this browser page.",
+            "Configure ODOO_URL, ODOO_DB (or ODOO_DATABASE), ODOO_USERNAME and ODOO_API_KEY in Railway Variables. Credentials never enter this browser page.",
           ),
     );
   }
@@ -78,19 +86,30 @@
     const [result, setResult] = useState(null);
     const [error, setError] = useState("");
     const [maxMoves, setMaxMoves] = useState(1000);
+    const [companyId, setCompanyId] = useState("");
 
     const refreshStatus = useCallback(async () => {
       setStatusLoading(true);
       try {
         const data = await SDK.fetchJSON(`${API_ROOT}/status`);
         setStatus(data);
+        const companies = Array.isArray(data?.companies) ? data.companies : [];
+        setCompanyId(current => {
+          if (companies.length === 1) return String(companies[0].id);
+          return companies.some(company => String(company.id) === String(current))
+            ? String(current)
+            : "";
+        });
       } catch (err) {
         setStatus({
           ok: false,
           configured: true,
           connected: false,
+          companies: [],
+          company_selection_required: false,
           message: err instanceof Error ? err.message : String(err),
         });
+        setCompanyId("");
       } finally {
         setStatusLoading(false);
       }
@@ -107,8 +126,13 @@
       try {
         const init = { method: "POST" };
         if (action === "audit") {
+          const payload = { max_moves: Number(maxMoves) || 1000 };
+          const selectedCompanyId = Number(companyId);
+          if (Number.isInteger(selectedCompanyId) && selectedCompanyId > 0) {
+            payload.company_id = selectedCompanyId;
+          }
           init.headers = { "Content-Type": "application/json" };
-          init.body = JSON.stringify({ max_moves: Number(maxMoves) || 1000 });
+          init.body = JSON.stringify(payload);
         }
         const data = await SDK.fetchJSON(`${API_ROOT}/${action}`, init);
         setResult({ action, data });
@@ -117,10 +141,13 @@
       } finally {
         setRunning("");
       }
-    }, [maxMoves]);
+    }, [companyId, maxMoves]);
 
     const audit = result?.action === "audit" ? result.data : null;
     const discovery = result?.action === "discover" ? result.data : null;
+    const companies = Array.isArray(status?.companies) ? status.companies : [];
+    const companySelectionRequired = Boolean(status?.company_selection_required);
+    const auditScopeMissing = companySelectionRequired && !companyId;
 
     return h(
       "main",
@@ -139,6 +166,7 @@
           "div",
           { className: "ab-safety" },
           h("span", null, "READ ONLY"),
+          h("span", null, "ONE COMPANY PER AUDIT"),
           h("span", null, "NO AUTO-POST"),
           h("span", null, "NO SECRETS IN GITHUB"),
           h("span", null, "DETERMINISTIC QUALITY GATES"),
@@ -171,7 +199,32 @@
           { className: "ab-card" },
           h("div", { className: "ab-eyebrow" }, "STEP 2"),
           h("h2", null, "Audit historical posted journals"),
-          h("p", null, "Grade historical examples as Gold, Silver or Rejected and measure attachment, partner, tax and analytic coverage before any model training."),
+          h("p", null, "Grade one company's historical examples as Gold, Silver or Rejected and measure attachment, partner, tax and analytic coverage before any model training."),
+          status?.connected
+            ? h(
+                "label",
+                { className: "ab-label" },
+                "Odoo company scope",
+                h(
+                  "select",
+                  {
+                    className: "ab-input",
+                    value: companyId,
+                    disabled: companies.length <= 1 || Boolean(running),
+                    onChange: event => setCompanyId(event.target.value),
+                  },
+                  companies.length > 1
+                    ? h("option", { value: "" }, "Select one company")
+                    : null,
+                  ...companies.map(company =>
+                    h("option", { key: company.id, value: String(company.id) }, `${company.name} (#${company.id})`),
+                  ),
+                ),
+                companySelectionRequired
+                  ? h("span", { className: "ab-help" }, "Required: histories from different Odoo companies are never mixed into one audit population.")
+                  : h("span", { className: "ab-help" }, "Single accessible company selected automatically."),
+              )
+            : null,
           h(
             "label",
             { className: "ab-label" },
@@ -183,17 +236,21 @@
               max: 5000,
               step: 100,
               value: maxMoves,
-              onChange: (event) => setMaxMoves(event.target.value),
+              onChange: event => setMaxMoves(event.target.value),
             }),
           ),
           h(
             "button",
             {
               className: "ab-button",
-              disabled: Boolean(running) || !status?.connected,
+              disabled: Boolean(running) || !status?.connected || auditScopeMissing,
               onClick: () => run("audit"),
             },
-            running === "audit" ? "Auditing…" : "Audit posted journals",
+            running === "audit"
+              ? "Auditing…"
+              : auditScopeMissing
+                ? "Select company to audit"
+                : "Audit posted journals",
           ),
         ),
       ),
@@ -229,6 +286,8 @@
             h(
               "div",
               { className: "ab-metrics" },
+              h(Metric, { label: "Company", value: audit.selected_company?.name }),
+              h(Metric, { label: "Company ID", value: audit.selected_company?.id }),
               h(Metric, { label: "Sampled posted entries", value: audit.selection?.sampled_posted_moves }),
               h(Metric, { label: "Total posted entries", value: audit.selection?.total_matching_posted_moves }),
               h(Metric, { label: "Gold rate", value: audit.quality?.gold_rate }),

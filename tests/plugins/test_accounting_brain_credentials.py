@@ -8,7 +8,10 @@ from plugins.accounting_brain.odoo_discovery.contracts import (
     OdooCredentials,
     OdooReadError,
 )
-from plugins.accounting_brain.odoo_discovery.xmlrpc_adapter import OdooXmlRpcReadAdapter
+from plugins.accounting_brain.odoo_discovery.xmlrpc_adapter import (
+    OdooXmlRpcReadAdapter,
+    _read_timeout_seconds,
+)
 
 
 def test_credentials_accept_legacy_database_name(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -41,6 +44,22 @@ def test_missing_credentials_error_never_contains_secret_values(
     assert "super-secret-value" not in message
     assert "reader@example.com" not in message
     assert "https://example.odoo.com" not in message
+
+
+def test_odoo_read_timeout_defaults_and_clamps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ODOO_READ_TIMEOUT_SECONDS", raising=False)
+    assert _read_timeout_seconds() == 60.0
+
+    monkeypatch.setenv("ODOO_READ_TIMEOUT_SECONDS", "1")
+    assert _read_timeout_seconds() == 5.0
+
+    monkeypatch.setenv("ODOO_READ_TIMEOUT_SECONDS", "999")
+    assert _read_timeout_seconds() == 300.0
+
+    monkeypatch.setenv("ODOO_READ_TIMEOUT_SECONDS", "invalid")
+    assert _read_timeout_seconds() == 60.0
 
 
 def test_read_adapter_blocks_mutation_before_network_access() -> None:

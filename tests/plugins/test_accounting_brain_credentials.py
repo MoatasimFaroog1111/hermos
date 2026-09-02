@@ -6,7 +6,9 @@ from hermes_cli.plugins import PluginManager
 from plugins.accounting_brain.odoo_discovery.contracts import (
     OdooConfigurationError,
     OdooCredentials,
+    OdooReadError,
 )
+from plugins.accounting_brain.odoo_discovery.xmlrpc_adapter import OdooXmlRpcReadAdapter
 
 
 def test_credentials_accept_legacy_database_name(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -39,6 +41,20 @@ def test_missing_credentials_error_never_contains_secret_values(
     assert "super-secret-value" not in message
     assert "reader@example.com" not in message
     assert "https://example.odoo.com" not in message
+
+
+def test_read_adapter_blocks_mutation_before_network_access() -> None:
+    adapter = OdooXmlRpcReadAdapter(
+        OdooCredentials(
+            url="https://example.odoo.com",
+            database="company-db",
+            username="reader@example.com",
+            api_key="super-secret-value",
+        )
+    )
+
+    with pytest.raises(OdooReadError, match="Blocked non-read Odoo method: write"):
+        adapter._execute_read("account.move", "write", [], {})
 
 
 def test_bundled_accounting_brain_autoloads_and_registers_cli() -> None:

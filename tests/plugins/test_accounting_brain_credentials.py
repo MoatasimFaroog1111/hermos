@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from hermes_cli.plugins import PluginManager
 from plugins.accounting_brain.odoo_discovery.contracts import (
     OdooConfigurationError,
     OdooCredentials,
@@ -38,3 +39,19 @@ def test_missing_credentials_error_never_contains_secret_values(
     assert "super-secret-value" not in message
     assert "reader@example.com" not in message
     assert "https://example.odoo.com" not in message
+
+
+def test_bundled_accounting_brain_autoloads_and_registers_cli() -> None:
+    manager = PluginManager()
+    manager.discover_and_load()
+
+    assert "accounting_brain" in manager._plugins
+    loaded = manager._plugins["accounting_brain"]
+    assert loaded.manifest.source == "bundled"
+    assert loaded.manifest.kind == "backend"
+    assert loaded.enabled is True, f"error: {loaded.error}"
+
+    assert "accounting" in manager._cli_commands
+    command = manager._cli_commands["accounting"]
+    assert callable(command["setup_fn"])
+    assert callable(command["handler_fn"])

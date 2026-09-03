@@ -31,6 +31,25 @@ def test_accounting_dashboard_manifest_declares_valid_assets() -> None:
     assert manifest["api"] == "plugin_api.py"
 
 
+def test_accounting_dashboard_uses_readable_theme_tokens() -> None:
+    css_path = (
+        get_bundled_plugins_dir()
+        / "accounting_brain"
+        / "dashboard"
+        / "dist"
+        / "style.css"
+    )
+    css = css_path.read_text(encoding="utf-8")
+
+    # Hermes intentionally gives --foreground alpha 0 in its default LENS_0
+    # palette. Dashboard plugins must route visible text through --midground
+    # (or a semantic alias derived from it) rather than consuming the
+    # transparent raw token directly.
+    assert "--ab-text: var(--midground" in css
+    assert "--ab-primary: var(--midground" in css
+    assert "var(--foreground)" not in css
+
+
 def test_accounting_dashboard_status_is_secret_safe_when_unconfigured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

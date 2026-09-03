@@ -1,9 +1,31 @@
 .ab-page {
+  --ab-text: var(--midground, #ffe6cb);
+  --ab-text-base: var(--midground-base, #ffe6cb);
+  --ab-surface: var(--background, #041c1c);
+  --ab-surface-base: var(--background-base, #041c1c);
+  --ab-card: color-mix(
+    in srgb,
+    var(--ab-text-base) 4%,
+    var(--ab-surface-base)
+  );
+  --ab-card-strong: color-mix(
+    in srgb,
+    var(--ab-text-base) 8%,
+    var(--ab-surface-base)
+  );
+  --ab-border: color-mix(in srgb, var(--ab-text-base) 18%, transparent);
+  --ab-border-strong: color-mix(in srgb, var(--ab-text-base) 34%, transparent);
+  --ab-muted: color-mix(in srgb, var(--ab-text) 72%, transparent);
+  --ab-subtle: color-mix(in srgb, var(--ab-text) 58%, transparent);
+  --ab-primary: var(--midground, #ffe6cb);
+  --ab-on-primary: var(--background-base, #041c1c);
+
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
   padding: 32px 0 56px;
   display: grid;
   gap: 20px;
+  color: var(--ab-text);
 }
 
 .ab-hero {
@@ -12,6 +34,7 @@
 
 .ab-hero h1 {
   margin: 6px 0 10px;
+  color: var(--ab-text);
   font-size: clamp(2rem, 5vw, 3.4rem);
   letter-spacing: -0.04em;
 }
@@ -19,16 +42,16 @@
 .ab-hero p {
   max-width: 820px;
   margin: 0;
-  color: color-mix(in srgb, var(--foreground) 72%, transparent);
+  color: var(--ab-muted);
   line-height: 1.65;
 }
 
 .ab-eyebrow {
+  color: var(--ab-subtle);
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.72rem;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  opacity: 0.68;
 }
 
 .ab-safety {
@@ -40,34 +63,38 @@
 
 .ab-safety span {
   padding: 6px 9px;
-  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border: 1px solid var(--ab-border);
   border-radius: 999px;
+  color: var(--ab-text);
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.68rem;
   letter-spacing: 0.06em;
-  background: color-mix(in srgb, var(--card) 78%, transparent);
+  background: var(--ab-card);
 }
 
 .ab-card {
   padding: 22px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ab-border);
   border-radius: var(--radius, 0.65rem);
-  background: color-mix(in srgb, var(--card) 92%, transparent);
+  background: var(--ab-card);
+  color: var(--ab-text);
   box-shadow: 0 12px 42px rgba(0, 0, 0, 0.12);
 }
 
 .ab-card h2 {
   margin: 7px 0 10px;
+  color: var(--ab-text);
   font-size: 1.15rem;
 }
 
 .ab-card h3 {
   margin: 22px 0 8px;
+  color: var(--ab-text);
   font-size: 0.9rem;
 }
 
 .ab-card p {
-  color: color-mix(in srgb, var(--foreground) 70%, transparent);
+  color: var(--ab-muted);
   line-height: 1.55;
 }
 
@@ -79,12 +106,12 @@
 }
 
 .ab-status.ok {
-  border-color: color-mix(in srgb, #39d98a 42%, var(--border));
+  border-color: color-mix(in srgb, #39d98a 48%, var(--ab-border));
 }
 
 .ab-status.warn,
 .ab-error {
-  border-color: color-mix(in srgb, #ffb347 48%, var(--border));
+  border-color: color-mix(in srgb, #ffb347 52%, var(--ab-border));
 }
 
 .ab-status.muted {
@@ -99,19 +126,29 @@
 
 .ab-button {
   appearance: none;
-  border: 1px solid color-mix(in srgb, var(--foreground) 35%, var(--border));
+  border: 1px solid var(--ab-border-strong);
   border-radius: calc(var(--radius, 0.65rem) * 0.72);
-  background: var(--foreground);
-  color: var(--background);
+  background: var(--ab-primary);
+  color: var(--ab-on-primary);
   padding: 10px 14px;
   font: inherit;
-  font-weight: 650;
+  font-weight: 700;
   cursor: pointer;
-  transition: opacity 120ms ease, transform 120ms ease;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .ab-button:hover:not(:disabled) {
   transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.ab-button:focus-visible,
+.ab-input:focus-visible {
+  outline: 2px solid var(--ab-primary);
+  outline-offset: 2px;
 }
 
 .ab-button:disabled {
@@ -120,27 +157,41 @@
 }
 
 .ab-button.secondary {
-  background: transparent;
-  color: var(--foreground);
+  background: var(--ab-card-strong);
+  color: var(--ab-text);
 }
 
 .ab-label {
   display: grid;
   gap: 7px;
   margin: 18px 0 12px;
+  color: var(--ab-text);
   font-size: 0.78rem;
   font-weight: 600;
+}
+
+.ab-label input[type="checkbox"] {
+  accent-color: var(--ab-primary);
 }
 
 .ab-input {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ab-border);
   border-radius: calc(var(--radius, 0.65rem) * 0.72);
   padding: 10px 11px;
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--ab-surface-base);
+  color: var(--ab-text);
   font: inherit;
+}
+
+.ab-input option {
+  background: var(--ab-surface-base);
+  color: var(--ab-text);
+}
+
+.ab-input::placeholder {
+  color: var(--ab-subtle);
 }
 
 .ab-metrics {
@@ -153,20 +204,22 @@
 .ab-metric {
   min-width: 0;
   padding: 12px;
-  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border: 1px solid var(--ab-border);
   border-radius: calc(var(--radius, 0.65rem) * 0.72);
-  background: color-mix(in srgb, var(--background) 72%, transparent);
+  background: var(--ab-surface-base);
+  color: var(--ab-text);
   display: grid;
   gap: 5px;
 }
 
 .ab-metric-label {
+  color: var(--ab-subtle);
   font-size: 0.7rem;
-  opacity: 0.6;
 }
 
 .ab-metric-value {
   overflow-wrap: anywhere;
+  color: var(--ab-text);
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.82rem;
 }
@@ -176,10 +229,10 @@
   overflow: auto;
   margin: 10px 0 0;
   padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border: 1px solid var(--ab-border);
   border-radius: calc(var(--radius, 0.65rem) * 0.72);
-  background: color-mix(in srgb, var(--background) 86%, transparent);
-  color: var(--foreground);
+  background: var(--ab-surface-base);
+  color: var(--ab-text);
   font-size: 0.74rem;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -189,15 +242,16 @@
 .ab-message,
 .ab-help {
   margin-bottom: 0;
+  color: var(--ab-muted);
 }
 
 .ab-error p {
-  color: inherit;
+  color: var(--ab-text);
 }
 
 .ab-footer {
   padding: 4px 2px;
-  color: color-mix(in srgb, var(--foreground) 58%, transparent);
+  color: var(--ab-subtle);
   font-size: 0.78rem;
   line-height: 1.55;
 }

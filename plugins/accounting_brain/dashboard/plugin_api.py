@@ -32,6 +32,10 @@ from plugins.accounting_brain.journal_training.historical_journals import (
     JournalSelection,
     load_historical_journal_batch,
 )
+from plugins.accounting_brain.model_evaluation.prepare import (
+    EvaluationPreparationError,
+    prepare_evaluation_evidence,
+)
 from plugins.accounting_brain.odoo_discovery.company_scope import (
     OdooCompanyScopeError,
     list_accessible_companies,
@@ -64,6 +68,16 @@ class ReadinessRequest(AuditRequest):
     include_silver: bool = False
     download_attachments: bool = False
     max_attachment_mb: int = Field(default=25, ge=1, le=100)
+
+
+class EvaluationPreparationRequest(BaseModel):
+    """Leakage-safe evaluation preparation for the newest private Gold dataset."""
+
+    hydrate_source_content: bool = False
+    max_attachment_mb: int = Field(default=25, ge=1, le=100)
+    holdout_fraction: float = Field(default=0.20, ge=0.10, le=0.40)
+    min_holdout: int = Field(default=100, ge=20, le=1000)
+    min_source_content_coverage: float = Field(default=0.90, ge=0.50, le=1.0)
 
 
 @router.get("/status")
@@ -135,6 +149,21 @@ async def readiness(request: ReadinessRequest) -> dict[str, Any]:
     try:
         return await asyncio.to_thread(_readiness_sync, request)
     except OdooCompanyScopeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except OdooConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except OdooReadError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/evaluation/prepare")
+async def prepare_evaluation(
+    request: EvaluationPreparationRequest,
+) -> dict[str, Any]:
+    """Prepare a temporal, target-separated evaluation set without training."""
+    try:
+        return await asyncio.to_thread(_prepare_evaluation_sync, request)
+    except EvaluationPreparationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except OdooConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -356,6 +385,29 @@ def _readiness_sync(request: ReadinessRequest) -> dict[str, Any]:
     )
     readiness_report["report_file"] = readiness_file.name
     return readiness_report
+
+
+def _prepare_evaluation_sync(
+    request: EvaluationPreparationRequest,
+) -> dict[str, Any]:
+    reader = _reader_from_environment()
+    datasets_root = get_hermes_home() / "accounting_brain" / "datasets"
+    report = prepare_evaluation_evidence(
+        reader,
+        datasets_root,
+        hydrate_source_content=request.hydrate_source_content,
+        max_attachment_bytes=request.max_attachment_mb * 1024 * 1024,
+        holdout_fraction=request.holdout_fraction,
+        min_holdout=request.min_holdout,
+        min_source_content_coverage=request.min_source_content_coverage,
+    )
+    output = _write_private_report(
+        "reports",
+        "model-evaluation-readiness",
+        report,
+    )
+    report["report_file"] = output.name
+    return report
 
 
 def _timestamp() -> str:

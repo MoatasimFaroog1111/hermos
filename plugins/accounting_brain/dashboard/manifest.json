@@ -1,9 +1,9 @@
 {
   "name": "accounting_brain",
   "label": "Accounting Brain",
-  "description": "Read-only Odoo discovery, historical journal audit, and training-data quality for the Hermes Accounting Brain.",
+  "description": "Read-only Odoo discovery, historical journal audit, Golden Dataset export, and launch-data gating for the Hermes Accounting Brain.",
   "icon": "Database",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "tab": { "path": "/accounting", "position": "after:analytics" },
   "entry": "dist/index.js",
   "css": "dist/style.css",

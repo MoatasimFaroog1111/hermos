@@ -87,6 +87,9 @@
     const [error, setError] = useState("");
     const [maxMoves, setMaxMoves] = useState(1000);
     const [companyId, setCompanyId] = useState("");
+    const [includeSilver, setIncludeSilver] = useState(false);
+    const [downloadAttachments, setDownloadAttachments] = useState(false);
+    const [maxAttachmentMb, setMaxAttachmentMb] = useState(25);
 
     const refreshStatus = useCallback(async () => {
       setStatusLoading(true);
@@ -125,11 +128,19 @@
       setResult(null);
       try {
         const init = { method: "POST" };
-        if (action === "audit") {
+        if (action === "audit" || action === "readiness") {
           const payload = { max_moves: Number(maxMoves) || 1000 };
           const selectedCompanyId = Number(companyId);
           if (Number.isInteger(selectedCompanyId) && selectedCompanyId > 0) {
             payload.company_id = selectedCompanyId;
+          }
+          if (action === "readiness") {
+            payload.include_silver = Boolean(includeSilver);
+            payload.download_attachments = Boolean(downloadAttachments);
+            payload.max_attachment_mb = Math.min(
+              100,
+              Math.max(1, Number(maxAttachmentMb) || 25),
+            );
           }
           init.headers = { "Content-Type": "application/json" };
           init.body = JSON.stringify(payload);
@@ -141,10 +152,11 @@
       } finally {
         setRunning("");
       }
-    }, [companyId, maxMoves]);
+    }, [companyId, downloadAttachments, includeSilver, maxAttachmentMb, maxMoves]);
 
     const audit = result?.action === "audit" ? result.data : null;
     const discovery = result?.action === "discover" ? result.data : null;
+    const readiness = result?.action === "readiness" ? result.data : null;
     const companies = Array.isArray(status?.companies) ? status.companies : [];
     const companySelectionRequired = Boolean(status?.company_selection_required);
     const auditScopeMissing = companySelectionRequired && !companyId;
@@ -160,13 +172,13 @@
         h(
           "p",
           null,
-          "Evidence-first learning from your real Odoo accounting history. Phase 1 is strictly read-only: discover the live schema, measure data quality, then decide how to train the accountant.",
+          "Evidence-first learning from your real Odoo accounting history. The launch path stays strictly read-only: prove the live schema and historical quality, build a traceable Golden Dataset, then permit model evaluation — never the other way around.",
         ),
         h(
           "div",
           { className: "ab-safety" },
           h("span", null, "READ ONLY"),
-          h("span", null, "ONE COMPANY PER AUDIT"),
+          h("span", null, "ONE COMPANY PER DATASET"),
           h("span", null, "NO AUTO-POST"),
           h("span", null, "NO SECRETS IN GITHUB"),
           h("span", null, "DETERMINISTIC QUALITY GATES"),
@@ -253,6 +265,68 @@
                 : "Audit posted journals",
           ),
         ),
+        h(
+          "article",
+          { className: "ab-card" },
+          h("div", { className: "ab-eyebrow" }, "STEP 3 // SHORTEST LAUNCH PATH"),
+          h("h2", null, "Build Golden Dataset + launch gate"),
+          h("p", null, "Run connection, schema discovery, single-company historical audit and Gold dataset export as one bounded read-only operation. This does not train a model or post anything to Odoo."),
+          h(
+            "label",
+            { className: "ab-label" },
+            h("input", {
+              type: "checkbox",
+              checked: includeSilver,
+              disabled: Boolean(running),
+              onChange: event => setIncludeSilver(event.target.checked),
+            }),
+            " Include Silver examples (review required)",
+          ),
+          h(
+            "label",
+            { className: "ab-label" },
+            h("input", {
+              type: "checkbox",
+              checked: downloadAttachments,
+              disabled: Boolean(running),
+              onChange: event => setDownloadAttachments(event.target.checked),
+            }),
+            " Download readable attachment bytes into the private Railway volume",
+          ),
+          downloadAttachments
+            ? h(
+                "label",
+                { className: "ab-label" },
+                "Maximum size per attachment (MiB)",
+                h("input", {
+                  className: "ab-input",
+                  type: "number",
+                  min: 1,
+                  max: 100,
+                  value: maxAttachmentMb,
+                  onChange: event => setMaxAttachmentMb(event.target.value),
+                }),
+              )
+            : null,
+          h(
+            "p",
+            { className: "ab-help" },
+            "Recommended first run: Gold only, attachment metadata only. Download content only after the audit confirms useful MIME types and coverage.",
+          ),
+          h(
+            "button",
+            {
+              className: "ab-button",
+              disabled: Boolean(running) || !status?.connected || auditScopeMissing,
+              onClick: () => run("readiness"),
+            },
+            running === "readiness"
+              ? "Running launch gate…"
+              : auditScopeMissing
+                ? "Select company first"
+                : "Run launch readiness",
+          ),
+        ),
       ),
 
       error
@@ -304,10 +378,43 @@
           )
         : null,
 
+      readiness
+        ? h(
+            "section",
+            { className: `ab-card ${readiness.ok ? "ok" : "ab-error"}` },
+            h("div", { className: "ab-eyebrow" }, "LAUNCH READINESS RESULT"),
+            h("h2", null, readiness.stage || "Launch readiness"),
+            h(
+              "div",
+              { className: "ab-metrics" },
+              h(Metric, { label: "Company", value: readiness.selected_company?.name }),
+              h(Metric, { label: "Sampled posted entries", value: readiness.audit?.selection?.sampled_posted_moves }),
+              h(Metric, { label: "Gold rate", value: readiness.audit?.quality?.gold_rate }),
+              h(Metric, { label: "Attachment coverage", value: readiness.audit?.quality?.attachment_coverage }),
+              h(Metric, { label: "Exported pairs", value: readiness.golden_dataset?.exported_pairs }),
+              h(Metric, { label: "Skipped pairs", value: readiness.golden_dataset?.skipped_pairs }),
+              h(Metric, { label: "Dataset type", value: readiness.golden_dataset?.dataset_kind }),
+              h(Metric, { label: "Next gate", value: readiness.next_gate }),
+              h(Metric, { label: "Private report", value: readiness.report_file }),
+            ),
+            h("h3", null, "Deterministic gates"),
+            h(JsonBlock, { value: readiness.gates }),
+            h("h3", null, "Golden Dataset summary"),
+            h(JsonBlock, { value: readiness.golden_dataset }),
+            h(
+              "p",
+              { className: "ab-help" },
+              readiness.ok
+                ? "The data layer passed. The next mandatory gate is model evaluation against this evidence; training and auto-post remain disabled."
+                : "The data gate is blocked. Fix the failing evidence gate before any model training or production accounting decision is allowed.",
+            ),
+          )
+        : null,
+
       h(
         "footer",
         { className: "ab-footer" },
-        "Training is intentionally disabled in this phase. We choose OCR / document model / base LLM only after the real Odoo audit tells us what the data supports.",
+        "Production rule: Evidence → Deterministic Rules → AI Reasoning → Validation → Human Review. Model training and Odoo auto-post stay disabled until their own explicit evaluation gates pass.",
       ),
     );
   }

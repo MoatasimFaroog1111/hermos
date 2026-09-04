@@ -79,13 +79,16 @@ def score_prediction_file(
     inputs_path = evaluation_root / "evaluation-inputs.jsonl"
     manifest_path = evaluation_root / "evaluation-manifest.json"
 
-    if not inputs_path.is_file() or not truth_path.is_file() or not manifest_path.is_file():
+    required_files = (inputs_path, truth_path, manifest_path)
+    if not all(path.is_file() for path in required_files):
         raise EvaluationOperatorError(
             "The latest Golden Dataset has not been prepared for evaluation"
         )
 
     manifest = _load_json(manifest_path)
-    if manifest.get("stage") != "EVALUATION_DATA_READY" or not bool(manifest.get("ok")):
+    if manifest.get("stage") != "EVALUATION_DATA_READY" or not bool(
+        manifest.get("ok")
+    ):
         raise EvaluationOperatorError(
             "Evaluation manifest is not ready; resolve its data-quality gates first"
         )
@@ -121,20 +124,25 @@ def score_prediction_file(
 
     case_scores: list[dict[str, Any]] = []
     for case_id in sorted(truth_ids):
-        expected = truth_by_id[case_id]
-        predicted = predictions_by_id[case_id]
-        score = score_journal_prediction(expected, predicted)
+        score = score_journal_prediction(
+            truth_by_id[case_id],
+            predictions_by_id[case_id],
+        )
         case_scores.append(
             {
                 "case_id": case_id,
                 "pass": bool(score.get("pass")),
                 "critical": dict(score.get("critical") or {}),
                 "secondary": dict(score.get("secondary") or {}),
-                "expected_summary": dict(score.get("expected") or {}),
                 "predicted_summary": dict(score.get("predicted") or {}),
             }
         )
 
+    destination = (
+        Path(output_path).expanduser().resolve()
+        if output_path is not None
+        else evaluation_root / "baseline-score.json"
+    )
     aggregate = aggregate_evaluation_scores(case_scores)
     report: dict[str, Any] = {
         "ok": True,
@@ -153,6 +161,7 @@ def score_prediction_file(
         },
         "metrics": aggregate,
         "cases": case_scores,
+        "artifact": str(destination),
         "safety": {
             "odoo_mutations": False,
             "training_performed": False,
@@ -162,20 +171,16 @@ def score_prediction_file(
         },
     }
 
-    destination = (
-        Path(output_path).expanduser().resolve()
-        if output_path is not None
-        else evaluation_root / "baseline-score.json"
-    )
     _write_private_json(destination, report)
-    report["artifact"] = str(destination)
     return report
 
 
 def _latest_evaluation_dataset(datasets_root: Path) -> Path:
     root = datasets_root.expanduser().resolve()
     if not root.is_dir():
-        raise EvaluationOperatorError("No private Accounting Brain dataset directory exists")
+        raise EvaluationOperatorError(
+            "No private Accounting Brain dataset directory exists"
+        )
     candidates = sorted(
         path
         for path in root.iterdir()
@@ -247,7 +252,9 @@ def _index_truth(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
             raise EvaluationOperatorError(f"Duplicate case_id in ground truth: {case_id}")
         target = row.get("target")
         if not isinstance(target, dict):
-            raise EvaluationOperatorError(f"Ground truth case {case_id} has no target object")
+            raise EvaluationOperatorError(
+                f"Ground truth case {case_id} has no target object"
+            )
         result[case_id] = target
     return result
 

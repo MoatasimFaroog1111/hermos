@@ -189,6 +189,9 @@ def _compact_target(target: Any) -> dict[str, Any]:
                     "account_id": line.get("account_id"),
                     "account_code": line.get("account_code"),
                     "account_name": line.get("account_name"),
+                    "partner_id": line.get("partner_id"),
+                    "partner_name": line.get("partner_name"),
+                    "label": line.get("label"),
                     "debit": line.get("debit"),
                     "credit": line.get("credit"),
                     "tax_ids": line.get("tax_ids") or [],
@@ -197,8 +200,11 @@ def _compact_target(target: Any) -> dict[str, Any]:
             )
     return {
         "move_type": target.get("move_type"),
+        "date": target.get("date"),
+        "reference": target.get("reference"),
         "journal": target.get("journal"),
         "partner": target.get("partner"),
+        "company": target.get("company"),
         "currency": target.get("currency"),
         "taxes": target.get("taxes") or [],
         "journal_entry": compact_lines,

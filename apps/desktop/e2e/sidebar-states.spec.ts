@@ -28,6 +28,13 @@ const BG_DOT_LABEL = 'Background task running'
 /** Finished-unread dot aria-label. */
 const UNREAD_DOT_LABEL = 'Finished — unread'
 
+/** Explicitly approve the held sentinel command used by this E2E scenario. */
+async function approveHeldBackgroundCommand(page: Page): Promise<void> {
+  const runButton = page.getByRole('button', { name: /^Run(?:\s|$)/ }).first()
+  await runButton.waitFor({ state: 'visible', timeout: 30_000 })
+  await runButton.click()
+}
+
 /** Send a message and wait for the final response to appear. */
 async function sendMessageAndWait(
   page: Page,
@@ -219,6 +226,11 @@ test.describe('sidebar states — cross-session dot transition', () => {
       undefined,
       { timeout: 15_000 },
     )
+
+    // The sentinel loop is intentionally classified as a command that needs
+    // approval. CI has no human operator, so exercise the real approval UI
+    // explicitly before waiting for the model's final turn.
+    await approveHeldBackgroundCommand(page)
 
     // Wait for the final answer (turn completes, but bg process still running).
     await page.waitForFunction(

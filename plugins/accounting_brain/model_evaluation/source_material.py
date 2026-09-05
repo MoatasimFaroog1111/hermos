@@ -11,7 +11,6 @@ import html
 import re
 import shutil
 import subprocess
-import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -162,11 +161,11 @@ def _extract_xlsx(path: Path) -> str:
             rows: list[str] = []
             for sheet_name in sheet_names[:20]:
                 root = ElementTree.fromstring(archive.read(sheet_name))
-                for row in root.iter():
-                    if not row.tag.endswith("}row"):
+                for xml_row in root.iter():
+                    if not xml_row.tag.endswith("}row"):
                         continue
                     values: list[str] = []
-                    for cell in row:
+                    for cell in xml_row:
                         if not cell.tag.endswith("}c"):
                             continue
                         cell_type = cell.attrib.get("t")
@@ -184,7 +183,7 @@ def _extract_xlsx(path: Path) -> str:
                         values.append(value)
                     if any(value.strip() for value in values):
                         rows.append("\t".join(values))
-                    if sum(len(row) for row in rows) >= _MAX_TEXT_CHARS:
+                    if sum(len(item) for item in rows) >= _MAX_TEXT_CHARS:
                         return "\n".join(rows)
     except (OSError, zipfile.BadZipFile, ElementTree.ParseError) as exc:
         raise SourceMaterialError(f"Invalid XLSX source: {path.name}") from exc

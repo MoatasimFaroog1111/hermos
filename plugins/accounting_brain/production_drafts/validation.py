@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 
 class DraftValidationError(RuntimeError):
     """Raised when a proposed journal is structurally unsafe."""
+
+
+_PARTNER_REQUIRED_MOVE_TYPES = {
+    "in_invoice",
+    "in_refund",
+    "out_invoice",
+    "out_refund",
+    "out_receipt",
+    "in_receipt",
+}
 
 
 def validate_draft_prediction(prediction: dict[str, Any]) -> dict[str, Any]:
@@ -42,9 +53,7 @@ def validate_draft_prediction(prediction: dict[str, Any]) -> dict[str, Any]:
             errors.append(f"line {index} tax_ids must be a list")
         else:
             for raw in tax_ids:
-                try:
-                    int(raw)
-                except (TypeError, ValueError):
+                if _positive_int(raw) is None:
                     errors.append(f"line {index} contains an invalid tax id")
                     break
         analytic = line.get("analytic_distribution")
@@ -61,9 +70,16 @@ def validate_draft_prediction(prediction: dict[str, Any]) -> dict[str, Any]:
     if total_debit != total_credit:
         errors.append("journal entry is not balanced")
 
-    for field in ("move_type", "journal", "currency"):
-        if prediction.get(field) in (None, False, "", {}):
-            errors.append(f"{field} is required")
+    move_type = str(prediction.get("move_type") or "").strip()
+    if not move_type:
+        errors.append("move_type is required")
+    _validate_date(prediction.get("date"), errors)
+    for field in ("journal", "company", "currency"):
+        _validate_reference(prediction.get(field), field, errors)
+    if move_type in _PARTNER_REQUIRED_MOVE_TYPES:
+        _validate_reference(prediction.get("partner"), "partner", errors)
+    elif prediction.get("partner") not in (None, False, ""):
+        _validate_reference(prediction.get("partner"), "partner", errors)
 
     return _result(
         not errors,
@@ -74,9 +90,35 @@ def validate_draft_prediction(prediction: dict[str, Any]) -> dict[str, Any]:
 
 
 def _account_present(line: dict[str, Any]) -> bool:
-    return line.get("account_code") not in (None, False, "") or line.get(
-        "account_id"
-    ) not in (None, False, "")
+    return line.get("account_code") not in (None, False, "") or _positive_int(
+        line.get("account_id")
+    ) is not None
+
+
+def _validate_reference(value: Any, label: str, errors: list[str]) -> None:
+    if not isinstance(value, dict) or _positive_int(value.get("id")) is None:
+        errors.append(f"{label} requires a positive Odoo id")
+
+
+def _validate_date(value: Any, errors: list[str]) -> None:
+    raw = str(value or "").strip()
+    try:
+        parsed = date.fromisoformat(raw)
+    except ValueError:
+        errors.append("date must be a valid YYYY-MM-DD accounting date")
+        return
+    if parsed.year < 2000 or parsed.year > 2100:
+        errors.append("date is outside the accepted accounting date range")
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        if value in (None, False, ""):
+            return None
+        result = int(value)
+    except (TypeError, ValueError):
+        return None
+    return result if result > 0 else None
 
 
 def _money(value: Any, errors: list[str], label: str) -> Decimal | None:

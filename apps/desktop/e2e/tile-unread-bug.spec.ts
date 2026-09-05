@@ -39,11 +39,18 @@ function sessionRow(page: import('@playwright/test').Page, text: string) {
   return page.locator('[data-slot="sidebar"] button').filter({ hasText: text }).first()
 }
 
+/** Explicitly approve the held sentinel command used by this E2E scenario. */
+async function approveHeldBackgroundCommand(page: import('@playwright/test').Page): Promise<void> {
+  const runButton = page.getByRole('button', { name: /^Run(?:\s|$)/ }).first()
+  await runButton.waitFor({ state: 'visible', timeout: 30_000 })
+  await runButton.click()
+}
+
 /** Common setup: start a turn with a held bg process + subagent, wait for
  *  the turn to complete, then switch to a new session so the first session is
  *  no longer $selectedStoredSessionId (required before opening a tile). */
 async function startTurnAndSwitchAway(page: import('@playwright/test').Page) {
-  // Send E2E_SIDEBAR_CROSS — starts a turn with sleep 5 + subagent.
+  // Send E2E_SIDEBAR_CROSS — starts a turn with a held background process + subagent.
   const composer = page.locator('[contenteditable="true"]').first()
   await composer.waitFor({ state: 'visible', timeout: 10_000 })
   await composer.click()
@@ -57,26 +64,29 @@ async function startTurnAndSwitchAway(page: import('@playwright/test').Page) {
     { timeout: 15_000 },
   )
 
-  // Wait for the background dot — confirms the turn is running.
-  await expect
-    .poll(
-      () => page.locator(`[aria-label="${BG_DOT_LABEL}"]`).count(),
-      { timeout: 30_000, message: 'background dot should appear' },
-    )
-    .toBeGreaterThan(0)
+  // The sentinel loop is intentionally classified as a command that needs
+  // approval. CI has no human operator, so exercise the real approval UI
+  // explicitly before waiting for the model's final turn.
+  await approveHeldBackgroundCommand(page)
 
-  // Wait for the turn to complete (final answer visible).
+  // Wait for the turn to complete (final answer visible). While the LLM turn
+  // is active, the sidebar intentionally gives working/stalled higher display
+  // priority than the background-process dot.
   await page.waitForFunction(
     (text) => (document.body.textContent ?? '').includes(text),
     SIDEBAR_CROSS_TEXTS.finalText,
     { timeout: 90_000 },
   )
 
-  // The background dot must still be visible: the turn is done but the
-  // process is held open by the sentinel, so this is a stable state rather
-  // than a window we have to catch in time.
-  const bgDuringTurn = await page.locator(`[aria-label="${BG_DOT_LABEL}"]`).count()
-  expect(bgDuringTurn, 'background dot should still be visible after turn completes').toBeGreaterThan(0)
+  // The sentinel still holds the background process open. Once the LLM turn
+  // is idle, background becomes the authoritative dot state; poll that stable
+  // state instead of racing the higher-priority working dot during the turn.
+  await expect
+    .poll(
+      () => page.locator(`[aria-label="${BG_DOT_LABEL}"]`).count(),
+      { timeout: 30_000, message: 'background dot should appear after turn completes' },
+    )
+    .toBeGreaterThan(0)
 
   // Switch to a new session — session A is no longer $selectedStoredSessionId.
   // This is required: openSessionTile bails if the session is already selected.

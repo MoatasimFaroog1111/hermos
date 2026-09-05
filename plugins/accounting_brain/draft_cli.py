@@ -15,10 +15,14 @@ from plugins.accounting_brain.odoo_discovery.contracts import (
     OdooReadError,
 )
 from plugins.accounting_brain.odoo_discovery.xmlrpc_adapter import OdooXmlRpcReadAdapter
-from plugins.accounting_brain.production_drafts.create_in_odoo import (
-    ApprovedDraftError,
-    create_reviewed_odoo_draft,
+from plugins.accounting_brain.production_drafts.approval import (
+    DraftApprovalError,
+    approve_draft_proposal,
 )
+from plugins.accounting_brain.production_drafts.approved_create import (
+    create_approved_odoo_draft,
+)
+from plugins.accounting_brain.production_drafts.create_in_odoo import ApprovedDraftError
 from plugins.accounting_brain.production_drafts.odoo_write import (
     OdooDraftWriteError,
     OdooXmlRpcDraftCreateAdapter,
@@ -29,6 +33,7 @@ from plugins.accounting_brain.production_drafts.predict import (
 )
 
 
+_CONFIRM_APPROVAL = "YES_APPROVE_DRAFT"
 _CONFIRM_CREATE_DRAFT = "YES_CREATE_DRAFT"
 
 
@@ -43,11 +48,24 @@ def register_draft_cli(parser: argparse.ArgumentParser) -> None:
     predict.add_argument("--timeout-seconds", type=float, default=120.0)
     predict.add_argument("--max-tokens", type=int, default=1800)
 
+    approve = subs.add_parser(
+        "approve",
+        help="Create an auditable human approval receipt for one exact proposal",
+    )
+    approve.add_argument("--proposal", required=True)
+    approve.add_argument("--reviewer", required=True)
+    approve.add_argument(
+        "--confirm-approval",
+        required=True,
+        help=f"Required literal confirmation: {_CONFIRM_APPROVAL}",
+    )
+
     create = subs.add_parser(
         "create-odoo-draft",
-        help="Create one reviewed proposal in Odoo as draft only",
+        help="Create one approved proposal in Odoo as draft only",
     )
     create.add_argument("--proposal", required=True)
+    create.add_argument("--approval", required=True)
     create.add_argument("--company-id", type=int, default=None)
     create.add_argument(
         "--confirm-create-draft",
@@ -73,6 +91,27 @@ def draft_command(args: argparse.Namespace) -> int:
                 timeout_seconds=max(15.0, min(300.0, float(args.timeout_seconds))),
                 max_tokens=max(256, min(4096, int(args.max_tokens))),
             )
+        elif action == "approve":
+            if args.confirm_approval != _CONFIRM_APPROVAL:
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": (
+                                "Explicit approval confirmation required: "
+                                f"--confirm-approval {_CONFIRM_APPROVAL}"
+                            ),
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                return 2
+            report = approve_draft_proposal(
+                Path(args.proposal),
+                permitted_root=home,
+                output_root=home / "accounting_brain" / "approvals",
+                reviewer=args.reviewer,
+            )
         elif action == "create-odoo-draft":
             if args.confirm_create_draft != _CONFIRM_CREATE_DRAFT:
                 print(
@@ -91,18 +130,20 @@ def draft_command(args: argparse.Namespace) -> int:
             credentials = OdooCredentials.from_environment()
             reader = OdooXmlRpcReadAdapter(credentials)
             writer = OdooXmlRpcDraftCreateAdapter(credentials)
-            report = create_reviewed_odoo_draft(
+            report = create_approved_odoo_draft(
                 Path(args.proposal),
+                Path(args.approval),
                 permitted_root=home,
                 reader=reader,
                 writer=writer,
                 requested_company_id=args.company_id,
             )
         else:
-            print("Choose action: predict or create-odoo-draft")
+            print("Choose action: predict, approve, or create-odoo-draft")
             return 2
     except (
         ApprovedDraftError,
+        DraftApprovalError,
         DraftPredictionError,
         OdooCompanyScopeError,
         OdooConfigurationError,

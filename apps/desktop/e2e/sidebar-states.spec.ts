@@ -28,6 +28,13 @@ const BG_DOT_LABEL = 'Background task running'
 /** Finished-unread dot aria-label. */
 const UNREAD_DOT_LABEL = 'Finished — unread'
 
+/** Explicitly approve the held sentinel command used by this E2E scenario. */
+async function approveHeldBackgroundCommand(page: Page): Promise<void> {
+  const runButton = page.getByRole('button', { name: /^Run(?:\s|$)/ }).first()
+  await runButton.waitFor({ state: 'visible', timeout: 30_000 })
+  await runButton.click()
+}
+
 /** Send a message and wait for the final response to appear. */
 async function sendMessageAndWait(
   page: Page,
@@ -211,13 +218,19 @@ test.describe('sidebar states — cross-session dot transition', () => {
     await composer.type('E2E_SIDEBAR_CROSS', { delay: 20 })
     await page.keyboard.press('Enter')
 
-    // Wait for the background dot to appear.
-    await expect
-      .poll(
-        () => page.locator(`[aria-label="${BG_DOT_LABEL}"]`).count(),
-        { timeout: 30_000, message: 'background dot should appear' },
-      )
-      .toBeGreaterThan(0)
+    // Wait for the user's message so we know the turn was submitted. While
+    // the LLM turn is authoritative-running the sidebar intentionally shows
+    // the working/stalled dot; the background dot has lower display priority.
+    await page.waitForFunction(
+      () => (document.body.textContent ?? '').includes('E2E_SIDEBAR_CROSS'),
+      undefined,
+      { timeout: 15_000 },
+    )
+
+    // The sentinel loop is intentionally classified as a command that needs
+    // approval. CI has no human operator, so exercise the real approval UI
+    // explicitly before waiting for the model's final turn.
+    await approveHeldBackgroundCommand(page)
 
     // Wait for the final answer (turn completes, but bg process still running).
     await page.waitForFunction(
@@ -226,11 +239,15 @@ test.describe('sidebar states — cross-session dot transition', () => {
       { timeout: 90_000 },
     )
 
-    // The background dot must still be visible: the turn is done but the
-    // process is held open by the sentinel, so this is a stable state rather
-    // than a window we have to catch in time.
-    const bgDuringTurn = await page.locator(`[aria-label="${BG_DOT_LABEL}"]`).count()
-    expect(bgDuringTurn, 'background dot should still be visible after turn completes').toBeGreaterThan(0)
+    // Once the LLM turn is idle, the held background process becomes the
+    // authoritative dot state. Poll it here rather than racing the higher-
+    // priority working dot while the turn is still active.
+    await expect
+      .poll(
+        () => page.locator(`[aria-label="${BG_DOT_LABEL}"]`).count(),
+        { timeout: 30_000, message: 'background dot should appear after turn completes' },
+      )
+      .toBeGreaterThan(0)
 
     // Evidence: bg dot visible on session A while its turn is done but the
     // background process hasn't exited yet.

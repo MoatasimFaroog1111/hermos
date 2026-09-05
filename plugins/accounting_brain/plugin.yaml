@@ -1,6 +1,6 @@
 name: accounting_brain
-version: 0.1.0
-description: "Read-only Odoo accounting data discovery and training-dataset preparation for the Hermes Accounting Brain. Operator CLI only; no model-tool footprint."
+version: 0.2.0
+description: "Odoo accounting discovery, leakage-safe evaluation, retrieval-grounded draft inference, and explicitly human-approved Odoo draft creation. Posting, reconciliation, payment, deletion, and automatic mutation remain unavailable."
 author: MoatasimFaroog1111
 kind: backend
 platforms:

@@ -1,11 +1,11 @@
 {
   "name": "accounting_brain",
   "label": "Accounting Brain",
-  "description": "Read-only Odoo discovery, historical journal audit, Golden Dataset export, leakage-safe evaluation preparation, and deterministic launch gating.",
+  "description": "Read-only Odoo discovery, historical journal audit, Golden Dataset export, leakage-safe evaluation preparation, background baseline model evaluation, and deterministic production gating.",
   "icon": "Database",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "tab": { "path": "/accounting", "position": "after:analytics" },
-  "entry": "dist/index.js",
+  "entry": "dist/index_v2.js",
   "css": "dist/style.css",
-  "api": "plugin_api.py"
+  "api": "plugin_api_v2.py"
 }

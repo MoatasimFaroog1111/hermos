@@ -1,9 +1,9 @@
 """Accounting Brain dashboard API.
 
-Mounted by Hermes under ``/api/plugins/accounting_brain``. Every operation is
-read-only against Odoo and delegates to the same discovery/audit/export use
-cases used by the operator CLI. Credentials remain server-side environment
-secrets and are never accepted from, or returned to, the browser.
+Mounted by Hermes under ``/api/plugins/accounting_brain``. Every Odoo operation
+is read-only and delegates to the same discovery/audit/export use cases used by
+the operator CLI. Credentials remain server-side environment secrets and are
+never accepted from, or returned to, the browser.
 
 Historical audit and dataset scope is fail-closed for multi-company databases.
 The shared company-scope use case is also used by the CLI so no entrypoint can
@@ -31,6 +31,13 @@ from plugins.accounting_brain.journal_training.filesystem_dataset import (
 from plugins.accounting_brain.journal_training.historical_journals import (
     JournalSelection,
     load_historical_journal_batch,
+)
+from plugins.accounting_brain.model_evaluation.baseline import (
+    BaselineEvaluationError,
+    run_baseline_evaluation,
+)
+from plugins.accounting_brain.model_evaluation.hermes_inference import (
+    HermesBaselineInference,
 )
 from plugins.accounting_brain.model_evaluation.prepare import (
     EvaluationPreparationError,
@@ -78,6 +85,14 @@ class EvaluationPreparationRequest(BaseModel):
     holdout_fraction: float = Field(default=0.20, ge=0.10, le=0.40)
     min_holdout: int = Field(default=100, ge=20, le=1000)
     min_source_content_coverage: float = Field(default=0.90, ge=0.50, le=1.0)
+
+
+class BaselineEvaluationRequest(BaseModel):
+    """Bounded paid-inference benchmark against the prepared temporal holdout."""
+
+    max_cases: int = Field(default=10, ge=1, le=500)
+    top_k: int = Field(default=3, ge=1, le=10)
+    min_consumable_coverage: float = Field(default=0.90, ge=0.50, le=1.0)
 
 
 @router.get("/status")
@@ -169,6 +184,23 @@ async def prepare_evaluation(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except OdooReadError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/evaluation/baseline")
+async def baseline_evaluation(
+    request: BaselineEvaluationRequest,
+) -> dict[str, Any]:
+    """Run an explicit, bounded baseline using Hermes' configured inference route.
+
+    Unlike preparation, this endpoint may consume paid inference-provider
+    credits. It never runs automatically; the dashboard requires a deliberate
+    button click. Ground truth remains physically separate until deterministic
+    scoring after each model prediction.
+    """
+    try:
+        return await asyncio.to_thread(_baseline_evaluation_sync, request)
+    except BaselineEvaluationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _validate_dates(request: AuditRequest) -> None:
@@ -404,6 +436,25 @@ def _prepare_evaluation_sync(
     output = _write_private_report(
         "reports",
         "model-evaluation-readiness",
+        report,
+    )
+    report["report_file"] = output.name
+    return report
+
+
+def _baseline_evaluation_sync(request: BaselineEvaluationRequest) -> dict[str, Any]:
+    inference = HermesBaselineInference()
+    datasets_root = get_hermes_home() / "accounting_brain" / "datasets"
+    report = run_baseline_evaluation(
+        inference,
+        datasets_root,
+        max_cases=request.max_cases,
+        top_k=request.top_k,
+        min_consumable_coverage=request.min_consumable_coverage,
+    )
+    output = _write_private_report(
+        "reports",
+        "baseline-model-evaluation",
         report,
     )
     report["report_file"] = output.name

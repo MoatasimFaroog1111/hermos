@@ -211,13 +211,14 @@ test.describe('sidebar states — cross-session dot transition', () => {
     await composer.type('E2E_SIDEBAR_CROSS', { delay: 20 })
     await page.keyboard.press('Enter')
 
-    // Wait for the background dot to appear.
-    await expect
-      .poll(
-        () => page.locator(`[aria-label="${BG_DOT_LABEL}"]`).count(),
-        { timeout: 30_000, message: 'background dot should appear' },
-      )
-      .toBeGreaterThan(0)
+    // Wait for the user's message so we know the turn was submitted. While
+    // the LLM turn is authoritative-running the sidebar intentionally shows
+    // the working/stalled dot; the background dot has lower display priority.
+    await page.waitForFunction(
+      () => (document.body.textContent ?? '').includes('E2E_SIDEBAR_CROSS'),
+      undefined,
+      { timeout: 15_000 },
+    )
 
     // Wait for the final answer (turn completes, but bg process still running).
     await page.waitForFunction(
@@ -226,11 +227,15 @@ test.describe('sidebar states — cross-session dot transition', () => {
       { timeout: 90_000 },
     )
 
-    // The background dot must still be visible: the turn is done but the
-    // process is held open by the sentinel, so this is a stable state rather
-    // than a window we have to catch in time.
-    const bgDuringTurn = await page.locator(`[aria-label="${BG_DOT_LABEL}"]`).count()
-    expect(bgDuringTurn, 'background dot should still be visible after turn completes').toBeGreaterThan(0)
+    // Once the LLM turn is idle, the held background process becomes the
+    // authoritative dot state. Poll it here rather than racing the higher-
+    // priority working dot while the turn is still active.
+    await expect
+      .poll(
+        () => page.locator(`[aria-label="${BG_DOT_LABEL}"]`).count(),
+        { timeout: 30_000, message: 'background dot should appear after turn completes' },
+      )
+      .toBeGreaterThan(0)
 
     // Evidence: bg dot visible on session A while its turn is done but the
     // background process hasn't exited yet.

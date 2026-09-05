@@ -92,7 +92,6 @@ def evaluate_production_readiness(
     checks["minimum_evaluation_cases"] = _rate_check(
         cases,
         limits.minimum_cases,
-        comparator=">=",
     )
     checks["strict_pass_rate"] = _rate_check(
         _rate(aggregate_metrics.get("strict_pass_rate")),
@@ -110,7 +109,10 @@ def evaluate_production_readiness(
         "journal_exact": limits.journal_exact,
     }
     for key, minimum in critical_thresholds.items():
-        checks[f"critical_{key}"] = _rate_check(_rate(critical.get(key)), minimum)
+        checks[f"critical_{key}"] = _rate_check(
+            _rate(critical.get(key)),
+            minimum,
+        )
 
     secondary_thresholds = {
         "partner_exact": limits.partner_exact,
@@ -118,14 +120,23 @@ def evaluate_production_readiness(
         "analytic_distribution_exact": limits.analytic_distribution_exact,
     }
     for key, minimum in secondary_thresholds.items():
-        checks[f"secondary_{key}"] = _rate_check(_rate(secondary.get(key)), minimum)
+        checks[f"secondary_{key}"] = _rate_check(
+            _rate(secondary.get(key)),
+            minimum,
+        )
 
     passed = all(item["pass"] for item in checks.values())
-    failed_checks = [name for name, result in checks.items() if not result["pass"]]
+    failed_checks = [
+        name for name, result in checks.items() if not result["pass"]
+    ]
 
     return {
         "ok": passed,
-        "stage": "PRODUCTION_READY_DRAFT_ONLY" if passed else "BLOCKED_BY_PRODUCTION_GATE",
+        "stage": (
+            "PRODUCTION_READY_DRAFT_ONLY"
+            if passed
+            else "BLOCKED_BY_PRODUCTION_GATE"
+        ),
         "production_mode": "draft_only",
         "auto_post": False,
         "human_review_required": True,
@@ -154,17 +165,29 @@ def _gate_passed(value: Any) -> bool:
     return False
 
 
-def _boolean_check(passed: bool, *, actual: Any, required: Any) -> dict[str, Any]:
-    return {"pass": bool(passed), "actual": actual, "required": required}
+def _boolean_check(
+    passed: bool,
+    *,
+    actual: Any,
+    required: Any,
+) -> dict[str, Any]:
+    return {
+        "pass": bool(passed),
+        "actual": actual,
+        "required": required,
+    }
 
 
-def _rate_check(actual: float | int | None, required: float | int, *, comparator: str = ">=") -> dict[str, Any]:
+def _rate_check(
+    actual: float | int | None,
+    required: float | int,
+) -> dict[str, Any]:
     passed = actual is not None and actual >= required
     return {
         "pass": bool(passed),
         "actual": actual,
         "required": required,
-        "comparator": comparator,
+        "comparator": ">=",
     }
 
 

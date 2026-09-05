@@ -2,7 +2,7 @@
 
 Only files already copied into the private Accounting Brain dataset are read.
 The extractor never fetches URLs, never reads arbitrary paths outside the
-selected Golden Dataset, and never mutates Odoo.
+selected permitted root, and never mutates Odoo.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import html
 import re
 import shutil
 import subprocess
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,7 @@ _XLSX_MIMES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 }
 _MAX_TEXT_CHARS = 60_000
+_MAX_PDF_VISION_PAGES = 4
 
 
 def build_model_inputs(
@@ -45,7 +47,7 @@ def build_model_inputs(
     *,
     dataset_root: Path,
 ) -> list[dict[str, Any]]:
-    """Return Hermes PluginLlm structured input blocks for one case."""
+    """Return Hermes PluginLlm structured input blocks for one source."""
 
     attachments = case_source.get("attachments")
     if not isinstance(attachments, list) or not attachments:
@@ -66,14 +68,23 @@ def build_model_inputs(
         filename = str(item.get("filename") or path.name)
 
         if mimetype in _IMAGE_MIMES:
-            blocks.append(
-                {
-                    "type": "image",
-                    "data": path.read_bytes(),
-                    "mime_type": mimetype,
-                    "file_name": filename,
-                }
-            )
+            blocks.append(_image_block(path, mimetype, filename))
+            continue
+
+        if mimetype in _PDF_MIMES:
+            text = _extract_pdf_text(path)
+            if text.strip():
+                blocks.append(
+                    {
+                        "type": "text",
+                        "text": (
+                            f"SOURCE DOCUMENT: {filename}\n\n"
+                            f"{text[:_MAX_TEXT_CHARS]}"
+                        ),
+                    }
+                )
+            else:
+                blocks.extend(_render_pdf_images(path, filename))
             continue
 
         text = _extract_text(path, mimetype)
@@ -90,6 +101,15 @@ def build_model_inputs(
             "Evaluation case has no model-consumable hydrated source content"
         )
     return blocks
+
+
+def _image_block(path: Path, mimetype: str, filename: str) -> dict[str, Any]:
+    return {
+        "type": "image",
+        "data": path.read_bytes(),
+        "mime_type": mimetype,
+        "file_name": filename,
+    }
 
 
 def _resolve_private_path(root: Path, raw_path: str) -> Path:
@@ -109,8 +129,6 @@ def _resolve_private_path(root: Path, raw_path: str) -> Path:
 def _extract_text(path: Path, mimetype: str) -> str:
     if mimetype in _TEXT_MIMES:
         return path.read_text(encoding="utf-8", errors="replace")
-    if mimetype in _PDF_MIMES:
-        return _extract_pdf(path)
     if mimetype in _DOCX_MIMES:
         return _extract_docx(path)
     if mimetype in _XLSX_MIMES:
@@ -118,11 +136,11 @@ def _extract_text(path: Path, mimetype: str) -> str:
     raise SourceMaterialError(f"Unsupported hydrated source type: {mimetype or 'unknown'}")
 
 
-def _extract_pdf(path: Path) -> str:
+def _extract_pdf_text(path: Path) -> str:
     executable = shutil.which("pdftotext")
     if not executable:
         raise SourceMaterialError(
-            "PDF extraction requires the production pdftotext runtime dependency"
+            "PDF extraction requires the production poppler-utils runtime dependency"
         )
     completed = subprocess.run(
         [executable, "-layout", str(path), "-"],
@@ -136,6 +154,50 @@ def _extract_pdf(path: Path) -> str:
             f"PDF extraction failed for {path.name}: exit {completed.returncode}"
         )
     return completed.stdout
+
+
+def _render_pdf_images(path: Path, filename: str) -> list[dict[str, Any]]:
+    executable = shutil.which("pdftoppm")
+    if not executable:
+        raise SourceMaterialError(
+            "Scanned PDF rendering requires the production poppler-utils runtime dependency"
+        )
+    with tempfile.TemporaryDirectory(prefix="accounting-pdf-") as temporary_dir:
+        prefix = Path(temporary_dir) / "page"
+        completed = subprocess.run(
+            [
+                executable,
+                "-f",
+                "1",
+                "-l",
+                str(_MAX_PDF_VISION_PAGES),
+                "-jpeg",
+                "-r",
+                "150",
+                str(path),
+                str(prefix),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        if completed.returncode != 0:
+            raise SourceMaterialError(
+                f"Scanned PDF rendering failed for {path.name}: exit {completed.returncode}"
+            )
+        pages = sorted(Path(temporary_dir).glob("page-*.jpg"))
+        if not pages:
+            raise SourceMaterialError(f"Scanned PDF produced no readable pages: {path.name}")
+        return [
+            {
+                "type": "image",
+                "data": page.read_bytes(),
+                "mime_type": "image/jpeg",
+                "file_name": f"{filename}#page-{index}",
+            }
+            for index, page in enumerate(pages, start=1)
+        ]
 
 
 def _extract_docx(path: Path) -> str:

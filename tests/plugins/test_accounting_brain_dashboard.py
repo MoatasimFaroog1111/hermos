@@ -28,7 +28,7 @@ def test_accounting_dashboard_manifest_declares_valid_assets() -> None:
     )
 
     assert manifest["tab"]["path"] == "/accounting"
-    assert manifest["api"] == "plugin_api.py"
+    assert manifest["api"] == "plugin_api_v2.py"
 
 
 def test_accounting_dashboard_uses_readable_theme_tokens() -> None:

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from hermes_constants import get_hermes_home
 from plugins.accounting_brain.model_evaluation.baseline_runner import build_host_llm
+from plugins.accounting_brain.odoo_discovery.company_scope import OdooCompanyScopeError
 from plugins.accounting_brain.odoo_discovery.contracts import (
     OdooConfigurationError,
     OdooCredentials,
@@ -103,6 +104,7 @@ def draft_command(args: argparse.Namespace) -> int:
     except (
         ApprovedDraftError,
         DraftPredictionError,
+        OdooCompanyScopeError,
         OdooConfigurationError,
         OdooDraftWriteError,
         OdooReadError,

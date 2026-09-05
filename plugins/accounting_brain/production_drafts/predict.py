@@ -6,6 +6,7 @@ import hashlib
 import json
 import mimetypes
 import os
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,14 +36,37 @@ class DraftPredictionError(RuntimeError):
     """Raised when a production draft cannot be prepared safely."""
 
 
+DRAFT_PREDICTION_SCHEMA: dict[str, Any] = deepcopy(PREDICTION_SCHEMA)
+DRAFT_PREDICTION_SCHEMA["required"] = [
+    "move_type",
+    "date",
+    "reference",
+    "journal",
+    "partner",
+    "company",
+    "currency",
+    "taxes",
+    "journal_entry",
+]
+DRAFT_PREDICTION_SCHEMA["properties"].update(
+    {
+        "date": {"type": "string"},
+        "reference": {"type": ["string", "null"]},
+        "company": {"type": "object"},
+    }
+)
+
 _DRAFT_INSTRUCTIONS = """You are the Accounting Brain inside Hermes.
 Prepare a DRAFT Odoo journal entry for the CURRENT SOURCE DOCUMENT.
 Historical examples come only from previously validated Gold company history.
 Use them to follow company-specific account, journal, tax, partner and analytic
 conventions, but never copy an amount unless the current document independently
-supports it. Return only the requested JSON. The journal must balance exactly.
-Do not call tools, do not write to Odoo, do not post, reconcile, pay, delete, or
-modify any accounting record. A human accountant will review the draft.
+supports it. Return move_type, accounting date (YYYY-MM-DD), source reference,
+company, journal, partner, currency, taxes and all journal lines. Preserve Odoo
+IDs from historical evidence only when the evidence supports the same entity.
+Return only the requested JSON. The journal must balance exactly. Do not call
+tools, write to Odoo, post, reconcile, pay, delete, or modify any record. A
+human accountant will review the draft before any explicit Odoo create action.
 """
 
 
@@ -107,7 +131,7 @@ def prepare_accounting_draft(
         result = llm.complete_structured(
             instructions=_DRAFT_INSTRUCTIONS,
             input=[*model_inputs, evidence_block],
-            json_schema=PREDICTION_SCHEMA,
+            json_schema=DRAFT_PREDICTION_SCHEMA,
             json_mode=True,
             schema_name="odoo_journal_draft_v1",
             temperature=0.0,

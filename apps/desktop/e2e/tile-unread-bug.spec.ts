@@ -39,6 +39,13 @@ function sessionRow(page: import('@playwright/test').Page, text: string) {
   return page.locator('[data-slot="sidebar"] button').filter({ hasText: text }).first()
 }
 
+/** Explicitly approve the held sentinel command used by this E2E scenario. */
+async function approveHeldBackgroundCommand(page: import('@playwright/test').Page): Promise<void> {
+  const runButton = page.getByRole('button', { name: /^Run(?:\s|$)/ }).first()
+  await runButton.waitFor({ state: 'visible', timeout: 30_000 })
+  await runButton.click()
+}
+
 /** Common setup: start a turn with a held bg process + subagent, wait for
  *  the turn to complete, then switch to a new session so the first session is
  *  no longer $selectedStoredSessionId (required before opening a tile). */
@@ -56,6 +63,11 @@ async function startTurnAndSwitchAway(page: import('@playwright/test').Page) {
     undefined,
     { timeout: 15_000 },
   )
+
+  // The sentinel loop is intentionally classified as a command that needs
+  // approval. CI has no human operator, so exercise the real approval UI
+  // explicitly before waiting for the model's final turn.
+  await approveHeldBackgroundCommand(page)
 
   // Wait for the turn to complete (final answer visible). While the LLM turn
   // is active, the sidebar intentionally gives working/stalled higher display

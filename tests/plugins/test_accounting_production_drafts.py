@@ -15,8 +15,11 @@ from plugins.accounting_brain.production_drafts.validation import (
 def _prediction() -> dict:
     return {
         "move_type": "in_invoice",
+        "date": "2026-09-05",
+        "reference": "INV-100",
         "journal": {"id": 3, "name": "Vendor Bills"},
         "partner": {"id": 9, "name": "Supplier"},
+        "company": {"id": 1, "name": "Guardian"},
         "currency": {"id": 1, "name": "SAR"},
         "taxes": [],
         "journal_entry": [
@@ -64,6 +67,18 @@ def test_draft_validator_rejects_unbalanced_entry() -> None:
 
     assert result["valid"] is False
     assert "journal entry is not balanced" in result["errors"]
+
+
+def test_draft_validator_requires_company_and_date() -> None:
+    prediction = _prediction()
+    prediction.pop("company")
+    prediction["date"] = "not-a-date"
+
+    result = validate_draft_prediction(prediction)
+
+    assert result["valid"] is False
+    assert "company requires a positive Odoo id" in result["errors"]
+    assert "date must be a valid YYYY-MM-DD accounting date" in result["errors"]
 
 
 def test_production_predictor_persists_review_only_proposal(tmp_path: Path) -> None:

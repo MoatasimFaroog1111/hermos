@@ -291,6 +291,51 @@ def test_baseline_runner_reports_schema_path_after_repair_still_fails(
     assert len(llm.calls) == 2
 
 
+def test_baseline_runner_emits_progress_without_exposing_ground_truth(tmp_path: Path) -> None:
+    _prepared_evaluation(tmp_path)
+    llm = SchemaRepairingLlm()
+    events: list[dict] = []
+
+    result = run_baseline_evaluation(tmp_path, llm, progress_callback=events.append)
+
+    assert result["cases"] == 1
+    phases = [event["phase"] for event in events]
+    assert phases == [
+        "initialized",
+        "case_started",
+        "schema_repair",
+        "case_completed",
+        "scoring",
+        "completed",
+    ]
+    completed = next(event for event in events if event["phase"] == "case_completed")
+    assert completed["completed_cases"] == 1
+    assert completed["total_cases"] == 1
+    assert completed["current_case"] == "case-1"
+    assert completed["repairs_attempted"] == 1
+    assert completed["providers"] == ["deepseek"]
+    assert completed["models"] == ["deepseek-v4-pro"]
+    serialized_events = json.dumps(events, default=str)
+    assert "ground-truth" not in serialized_events
+    assert "510000" not in serialized_events
+    assert "Office supplies" not in serialized_events
+
+
+def test_baseline_runner_ignores_progress_callback_failures(tmp_path: Path) -> None:
+    _prepared_evaluation(tmp_path)
+
+    def broken_callback(_event: dict) -> None:
+        raise RuntimeError("telemetry sink unavailable")
+
+    result = run_baseline_evaluation(
+        tmp_path,
+        FakeLlm(_target()),
+        progress_callback=broken_callback,
+    )
+
+    assert result["cases"] == 1
+
+
 def test_baseline_runner_requires_ready_manifest(tmp_path: Path) -> None:
     dataset = _prepared_evaluation(tmp_path)
     manifest_path = dataset / "evaluation" / "evaluation-manifest.json"

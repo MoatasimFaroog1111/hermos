@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from plugins.accounting_brain.model_evaluation.evaluate import (
     EvaluationRunError,
@@ -24,6 +25,9 @@ from plugins.accounting_brain.model_evaluation.source_material import (
 
 class StructuredLlmPort(Protocol):
     def complete_structured(self, **kwargs: Any) -> Any: ...
+
+
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 
 PREDICTION_SCHEMA: dict[str, Any] = {
@@ -93,9 +97,15 @@ def run_baseline_evaluation(
     *,
     timeout_seconds: float = 120.0,
     max_tokens: int = 1800,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, Any]:
-    """Run every prepared holdout case, persist predictions, then score them."""
+    """Run every prepared holdout case, persist predictions, then score them.
 
+    ``progress_callback`` is observational only. Callback failures are ignored so
+    telemetry can never change the evaluation result, holdout, or safety gates.
+    """
+
+    started_monotonic = time.monotonic()
     evaluation_root = _latest_evaluation_root(Path(datasets_root))
     manifest = _load_json(evaluation_root / "evaluation-manifest.json")
     if manifest.get("ok") is not True or manifest.get("stage") != "EVALUATION_DATA_READY":
@@ -107,6 +117,20 @@ def run_baseline_evaluation(
     input_rows = _load_jsonl(evaluation_root / "evaluation-inputs.jsonl")
     if not input_rows:
         raise BaselineEvaluationError("Prepared evaluation contains no model inputs")
+
+    total_cases = len(input_rows)
+    repairs_attempted = 0
+    _emit_progress(
+        progress_callback,
+        phase="initialized",
+        total_cases=total_cases,
+        completed_cases=0,
+        current_case=None,
+        repairs_attempted=0,
+        elapsed_seconds=0.0,
+        last_case_duration_seconds=None,
+        last_model_call_duration_seconds=None,
+    )
 
     dataset_root = evaluation_root.parent
     predictions: list[dict[str, Any]] = []
@@ -120,6 +144,7 @@ def run_baseline_evaluation(
     models: set[str] = set()
 
     for row in input_rows:
+        case_started = time.monotonic()
         case_id = str(row.get("case_id") or "").strip()
         if not case_id:
             raise BaselineEvaluationError("Evaluation input contains no case_id")
@@ -129,11 +154,24 @@ def run_baseline_evaluation(
         if not isinstance(source, dict):
             raise BaselineEvaluationError(f"Missing source for case {case_id}")
 
+        _emit_progress(
+            progress_callback,
+            phase="case_started",
+            total_cases=total_cases,
+            completed_cases=len(predictions),
+            current_case=case_id,
+            repairs_attempted=repairs_attempted,
+            elapsed_seconds=round(time.monotonic() - started_monotonic, 3),
+            last_case_duration_seconds=None,
+            last_model_call_duration_seconds=None,
+        )
+
         try:
             model_inputs = build_model_inputs(source, dataset_root=dataset_root)
         except SourceMaterialError as exc:
             raise BaselineEvaluationError(f"Source preparation failed for {case_id}: {exc}") from exc
 
+        model_call_started = time.monotonic()
         try:
             result = _complete_prediction(
                 llm,
@@ -145,6 +183,7 @@ def run_baseline_evaluation(
             raise BaselineEvaluationError(
                 f"Host model inference failed for case {case_id}: {type(exc).__name__}"
             ) from exc
+        last_model_call_duration = round(time.monotonic() - model_call_started, 3)
 
         result_chain = [result]
         prediction = getattr(result, "parsed", None)
@@ -155,6 +194,19 @@ def run_baseline_evaluation(
 
         violation = _prediction_schema_violation(prediction)
         if violation is not None:
+            repairs_attempted += 1
+            _emit_progress(
+                progress_callback,
+                phase="schema_repair",
+                total_cases=total_cases,
+                completed_cases=len(predictions),
+                current_case=case_id,
+                repairs_attempted=repairs_attempted,
+                elapsed_seconds=round(time.monotonic() - started_monotonic, 3),
+                last_case_duration_seconds=None,
+                last_model_call_duration_seconds=last_model_call_duration,
+            )
+            repair_started = time.monotonic()
             try:
                 repair_result = _repair_prediction_once(
                     llm,
@@ -167,6 +219,7 @@ def run_baseline_evaluation(
                 raise BaselineEvaluationError(
                     f"Host model schema repair failed for case {case_id}: {type(exc).__name__}"
                 ) from exc
+            last_model_call_duration = round(time.monotonic() - repair_started, 3)
             result_chain.append(repair_result)
             repaired_prediction = getattr(repair_result, "parsed", None)
             if not isinstance(repaired_prediction, dict):
@@ -200,13 +253,61 @@ def run_baseline_evaluation(
                 if cost is not None:
                     usage["cost_usd"] += float(cost)
 
+        _emit_progress(
+            progress_callback,
+            phase="case_completed",
+            total_cases=total_cases,
+            completed_cases=len(predictions),
+            current_case=case_id,
+            repairs_attempted=repairs_attempted,
+            elapsed_seconds=round(time.monotonic() - started_monotonic, 3),
+            last_case_duration_seconds=round(time.monotonic() - case_started, 3),
+            last_model_call_duration_seconds=last_model_call_duration,
+            providers=sorted(providers),
+            models=sorted(models),
+            total_tokens=usage["total_tokens"],
+            cost_usd=round(float(usage["cost_usd"]), 6),
+        )
+
     predictions_path = evaluation_root / "evaluation-predictions.jsonl"
     _write_jsonl_atomic(predictions_path, predictions)
+
+    _emit_progress(
+        progress_callback,
+        phase="scoring",
+        total_cases=total_cases,
+        completed_cases=len(predictions),
+        current_case=None,
+        repairs_attempted=repairs_attempted,
+        elapsed_seconds=round(time.monotonic() - started_monotonic, 3),
+        last_case_duration_seconds=None,
+        last_model_call_duration_seconds=None,
+        providers=sorted(providers),
+        models=sorted(models),
+        total_tokens=usage["total_tokens"],
+        cost_usd=round(float(usage["cost_usd"]), 6),
+    )
 
     try:
         score_report = score_latest_evaluation(Path(datasets_root))
     except EvaluationRunError as exc:
         raise BaselineEvaluationError(f"Deterministic scoring failed: {exc}") from exc
+
+    _emit_progress(
+        progress_callback,
+        phase="completed",
+        total_cases=total_cases,
+        completed_cases=len(predictions),
+        current_case=None,
+        repairs_attempted=repairs_attempted,
+        elapsed_seconds=round(time.monotonic() - started_monotonic, 3),
+        last_case_duration_seconds=None,
+        last_model_call_duration_seconds=None,
+        providers=sorted(providers),
+        models=sorted(models),
+        total_tokens=usage["total_tokens"],
+        cost_usd=round(float(usage["cost_usd"]), 6),
+    )
 
     return {
         "ok": bool(score_report.get("ok")),
@@ -226,6 +327,19 @@ def run_baseline_evaluation(
             "human_review_required": True,
         },
     }
+
+
+def _emit_progress(
+    callback: ProgressCallback | None,
+    **progress: Any,
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(dict(progress))
+    except Exception:
+        # Telemetry must never be able to alter accounting evaluation behavior.
+        return
 
 
 def _complete_prediction(

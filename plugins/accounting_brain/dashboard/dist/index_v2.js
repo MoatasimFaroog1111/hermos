@@ -190,9 +190,13 @@
     const companySelectionRequired = Boolean(status?.company_selection_required);
     const auditScopeMissing = companySelectionRequired && !companyId;
     const baselineResult = baseline?.result;
+    const baselineProgress = baseline?.progress;
     const score = baselineResult?.score_report;
     const aggregate = score?.aggregate;
     const productionGate = score?.production_gate;
+    const progressCases = baselineProgress?.total_cases == null
+      ? "—"
+      : `${baselineProgress?.completed_cases ?? 0} / ${baselineProgress.total_cases}`;
 
     return h(
       "main",
@@ -247,15 +251,21 @@
           h("label", { className: "ab-label" }, "Per-case timeout (seconds)", h("input", { className: "ab-input", type: "number", min: 15, max: 300, value: baselineTimeout, disabled: baseline?.status === "running", onChange: event => setBaselineTimeout(event.target.value) })),
           h("label", { className: "ab-label" }, "Maximum output tokens per case", h("input", { className: "ab-input", type: "number", min: 256, max: 4096, step: 128, value: baselineMaxTokens, disabled: baseline?.status === "running", onChange: event => setBaselineMaxTokens(event.target.value) })),
           h("button", { className: "ab-button", disabled: baseline?.status === "running", onClick: startBaseline }, baseline?.status === "running" ? "Baseline evaluation running…" : "Run Baseline Model Evaluation"),
-          h("button", { className: "ab-button secondary", disabled: baseline?.status === "running", onClick: refreshBaseline }, "Refresh baseline status"),
+          h("button", { className: "ab-button secondary", disabled: false, onClick: refreshBaseline }, "Refresh baseline status"),
           h("p", { className: "ab-help" }, "This task runs in the dashboard process so it can safely access the same private Railway volume. Odoo writes, model training and auto-post remain disabled."),
           baseline ? h("div", { className: "ab-metrics" },
             h(Metric, { label: "Status", value: baseline.status }),
-            h(Metric, { label: "Cases", value: baselineResult?.cases }),
-            h(Metric, { label: "Provider", value: baselineResult?.providers?.join(", ") }),
-            h(Metric, { label: "Model", value: baselineResult?.models?.join(", ") }),
-            h(Metric, { label: "Total tokens", value: baselineResult?.usage?.total_tokens }),
-            h(Metric, { label: "Cost USD", value: baselineResult?.usage?.cost_usd }),
+            h(Metric, { label: "Progress", value: baseline?.status === "running" ? progressCases : baselineResult?.cases }),
+            h(Metric, { label: "Phase", value: baselineProgress?.phase }),
+            h(Metric, { label: "Current case", value: baselineProgress?.current_case }),
+            h(Metric, { label: "Elapsed seconds", value: baselineProgress?.elapsed_seconds }),
+            h(Metric, { label: "Last case seconds", value: baselineProgress?.last_case_duration_seconds }),
+            h(Metric, { label: "Last model call seconds", value: baselineProgress?.last_model_call_duration_seconds }),
+            h(Metric, { label: "Schema repairs", value: baselineProgress?.repairs_attempted }),
+            h(Metric, { label: "Provider", value: baselineResult?.providers?.join(", ") || baselineProgress?.providers?.join(", ") }),
+            h(Metric, { label: "Model", value: baselineResult?.models?.join(", ") || baselineProgress?.models?.join(", ") }),
+            h(Metric, { label: "Total tokens", value: baselineResult?.usage?.total_tokens ?? baselineProgress?.total_tokens }),
+            h(Metric, { label: "Cost USD", value: baselineResult?.usage?.cost_usd ?? baselineProgress?.cost_usd }),
             h(Metric, { label: "Strict pass rate", value: aggregate?.strict_pass_rate }),
             h(Metric, { label: "Production gate", value: productionGate?.stage }),
             h(Metric, { label: "Private report", value: baselineResult?.report_file })) : null),

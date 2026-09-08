@@ -42,6 +42,7 @@ _BASELINE_STATE: dict[str, Any] = {
     "finished_at": None,
     "result": None,
     "error": None,
+    "progress": None,
 }
 
 
@@ -66,6 +67,17 @@ async def start_baseline_evaluation(
                 "finished_at": None,
                 "result": None,
                 "error": None,
+                "progress": {
+                    "phase": "starting",
+                    "total_cases": None,
+                    "completed_cases": 0,
+                    "current_case": None,
+                    "repairs_attempted": 0,
+                    "elapsed_seconds": 0.0,
+                    "last_case_duration_seconds": None,
+                    "last_model_call_duration_seconds": None,
+                    "updated_at": _timestamp(),
+                },
             }
         )
         _BASELINE_TASK = asyncio.create_task(_run_baseline_background(request))
@@ -85,6 +97,7 @@ async def baseline_evaluation_status() -> dict[str, Any]:
                 "finished_at": persisted.get("finished_at"),
                 "result": persisted.get("result"),
                 "error": persisted.get("error"),
+                "progress": persisted.get("progress"),
                 "safety": _safety_summary(),
             }
     return _public_state()
@@ -116,6 +129,7 @@ def _run_baseline_sync(request: BaselineEvaluationRequest) -> dict[str, Any]:
         build_host_llm(),
         timeout_seconds=request.timeout_seconds,
         max_tokens=request.max_tokens,
+        progress_callback=_record_progress,
     )
     report["dashboard_execution"] = {
         "background_task": True,
@@ -124,6 +138,14 @@ def _run_baseline_sync(request: BaselineEvaluationRequest) -> dict[str, Any]:
         "auto_post": False,
     }
     return report
+
+
+def _record_progress(progress: dict[str, Any]) -> None:
+    """Record observational telemetry without changing evaluation behavior."""
+
+    snapshot = dict(progress)
+    snapshot["updated_at"] = _timestamp()
+    _BASELINE_STATE["progress"] = snapshot
 
 
 def _finish_failed(message: str) -> None:

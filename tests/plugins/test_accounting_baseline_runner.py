@@ -53,6 +53,12 @@ def _target() -> dict:
     }
 
 
+def _invalid_target() -> dict:
+    prediction = _target()
+    prediction["journal_entry"][0].pop("analytic_distribution")
+    return prediction
+
+
 class FakeLlm:
     def __init__(self, prediction: dict) -> None:
         self.prediction = prediction
@@ -86,6 +92,46 @@ class JsonSchemaRejectingLlm(FakeLlm):
             )
         return SimpleNamespace(
             parsed=self.prediction,
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=20,
+                total_tokens=30,
+                cost_usd=0.01,
+            ),
+        )
+
+
+class SchemaRepairingLlm:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def complete_structured(self, **kwargs):
+        self.calls.append(kwargs)
+        prediction = (
+            _target()
+            if kwargs.get("purpose") == "accounting_baseline_schema_repair"
+            else _invalid_target()
+        )
+        return SimpleNamespace(
+            parsed=prediction,
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=20,
+                total_tokens=30,
+                cost_usd=0.01,
+            ),
+        )
+
+
+class SchemaRepairStillInvalidLlm(SchemaRepairingLlm):
+    def complete_structured(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            parsed=_invalid_target(),
             provider="deepseek",
             model="deepseek-v4-pro",
             usage=SimpleNamespace(
@@ -204,6 +250,45 @@ def test_baseline_runner_falls_back_to_json_object_when_schema_format_is_rejecte
     assert llm.calls[1]["json_schema"] is None
     assert llm.calls[1]["json_mode"] is True
     assert "JSON schema" in llm.calls[1]["instructions"]
+
+
+def test_baseline_runner_repairs_one_schema_invalid_prediction_without_ground_truth(
+    tmp_path: Path,
+) -> None:
+    _prepared_evaluation(tmp_path)
+    llm = SchemaRepairingLlm()
+
+    result = run_baseline_evaluation(tmp_path, llm)
+
+    assert result["cases"] == 1
+    assert result["providers"] == ["deepseek"]
+    assert result["models"] == ["deepseek-v4-pro"]
+    assert result["usage"]["total_tokens"] == 60
+    assert len(llm.calls) == 2
+    repair_call = llm.calls[1]
+    assert repair_call["purpose"] == "accounting_baseline_schema_repair"
+    assert repair_call["json_schema"] is None
+    assert repair_call["json_mode"] is True
+    assert "analytic_distribution" in repair_call["instructions"]
+    serialized_repair = json.dumps(repair_call, default=str)
+    assert "ground-truth" not in serialized_repair
+    assert "Office supplies" not in serialized_repair
+
+
+def test_baseline_runner_reports_schema_path_after_repair_still_fails(
+    tmp_path: Path,
+) -> None:
+    _prepared_evaluation(tmp_path)
+    llm = SchemaRepairStillInvalidLlm()
+
+    with pytest.raises(BaselineEvaluationError) as exc_info:
+        run_baseline_evaluation(tmp_path, llm)
+
+    message = str(exc_info.value)
+    assert "case case-1" in message
+    assert "$.journal_entry[0]" in message
+    assert "analytic_distribution" in message
+    assert len(llm.calls) == 2
 
 
 def test_baseline_runner_requires_ready_manifest(tmp_path: Path) -> None:

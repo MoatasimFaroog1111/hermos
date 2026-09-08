@@ -73,6 +73,30 @@ class FakeLlm:
         )
 
 
+class BadRequestError(Exception):
+    pass
+
+
+class JsonSchemaRejectingLlm(FakeLlm):
+    def complete_structured(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs.get("json_schema") is not None:
+            raise BadRequestError(
+                "response_format type json_schema is unsupported; use json_object"
+            )
+        return SimpleNamespace(
+            parsed=self.prediction,
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=20,
+                total_tokens=30,
+                cost_usd=0.01,
+            ),
+        )
+
+
 def _prepared_evaluation(tmp_path: Path) -> Path:
     dataset = tmp_path / "golden-20260905T000000Z"
     evaluation = dataset / "evaluation"
@@ -162,6 +186,24 @@ def test_baseline_runner_never_sends_ground_truth_to_fake_llm(tmp_path: Path) ->
     assert "ground-truth" not in serialized_call
     assert "510000" not in serialized_call
     assert (dataset / "evaluation" / "evaluation-predictions.jsonl").is_file()
+
+
+def test_baseline_runner_falls_back_to_json_object_when_schema_format_is_rejected(
+    tmp_path: Path,
+) -> None:
+    _prepared_evaluation(tmp_path)
+    llm = JsonSchemaRejectingLlm(_target())
+
+    result = run_baseline_evaluation(tmp_path, llm)
+
+    assert result["cases"] == 1
+    assert result["providers"] == ["deepseek"]
+    assert result["models"] == ["deepseek-v4-pro"]
+    assert len(llm.calls) == 2
+    assert llm.calls[0]["json_schema"] is not None
+    assert llm.calls[1]["json_schema"] is None
+    assert llm.calls[1]["json_mode"] is True
+    assert "JSON schema" in llm.calls[1]["instructions"]
 
 
 def test_baseline_runner_requires_ready_manifest(tmp_path: Path) -> None:

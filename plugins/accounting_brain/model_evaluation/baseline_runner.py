@@ -135,16 +135,11 @@ def run_baseline_evaluation(
             raise BaselineEvaluationError(f"Source preparation failed for {case_id}: {exc}") from exc
 
         try:
-            result = llm.complete_structured(
-                instructions=_INSTRUCTIONS,
-                input=model_inputs,
-                json_schema=PREDICTION_SCHEMA,
-                json_mode=True,
-                schema_name="odoo_journal_prediction_v1",
-                temperature=0.0,
+            result = _complete_prediction(
+                llm,
+                model_inputs=model_inputs,
+                timeout_seconds=timeout_seconds,
                 max_tokens=max_tokens,
-                timeout=timeout_seconds,
-                purpose="accounting_baseline_evaluation",
             )
         except Exception as exc:
             raise BaselineEvaluationError(
@@ -156,6 +151,7 @@ def run_baseline_evaluation(
             raise BaselineEvaluationError(
                 f"Host model returned invalid structured JSON for case {case_id}"
             )
+        _validate_prediction_schema(prediction, case_id=case_id)
         predictions.append(
             {
                 "contract_version": contract_version,
@@ -204,6 +200,79 @@ def run_baseline_evaluation(
             "human_review_required": True,
         },
     }
+
+
+def _complete_prediction(
+    llm: StructuredLlmPort,
+    *,
+    model_inputs: list[dict[str, Any]],
+    timeout_seconds: float,
+    max_tokens: int,
+) -> Any:
+    """Prefer native JSON Schema output, then safely fall back to JSON mode.
+
+    Some OpenAI-compatible chat providers, including DeepSeek Chat Completions,
+    support ``response_format={\"type\": \"json_object\"}`` but reject
+    ``response_format.type=json_schema`` with HTTP 400. The schema remains in
+    the prompt and is validated locally after the response, so this fallback
+    changes only the wire-level response-format hint, not the evaluation
+    contract or deterministic validation.
+    """
+
+    common = {
+        "input": model_inputs,
+        "json_mode": True,
+        "schema_name": "odoo_journal_prediction_v1",
+        "temperature": 0.0,
+        "max_tokens": max_tokens,
+        "timeout": timeout_seconds,
+        "purpose": "accounting_baseline_evaluation",
+    }
+    try:
+        return llm.complete_structured(
+            instructions=_INSTRUCTIONS,
+            json_schema=PREDICTION_SCHEMA,
+            **common,
+        )
+    except Exception as exc:
+        if not _is_unsupported_json_schema_response_format(exc):
+            raise
+
+    schema_text = json.dumps(PREDICTION_SCHEMA, ensure_ascii=False, sort_keys=True)
+    fallback_instructions = (
+        f"{_INSTRUCTIONS}\n\n"
+        "Return one JSON object matching this schema exactly.\n"
+        f"JSON schema:\n{schema_text}"
+    )
+    return llm.complete_structured(
+        instructions=fallback_instructions,
+        json_schema=None,
+        **common,
+    )
+
+
+def _is_unsupported_json_schema_response_format(exc: Exception) -> bool:
+    if type(exc).__name__ != "BadRequestError":
+        return False
+    message = str(exc).lower()
+    return "response_format" in message and (
+        "json_schema" in message or "json_object" in message or "type" in message
+    )
+
+
+def _validate_prediction_schema(prediction: dict[str, Any], *, case_id: str) -> None:
+    try:
+        import jsonschema  # type: ignore[import-untyped]
+    except ImportError as exc:
+        raise BaselineEvaluationError(
+            "Accounting baseline requires jsonschema for deterministic output validation"
+        ) from exc
+    try:
+        jsonschema.validate(prediction, PREDICTION_SCHEMA)
+    except jsonschema.ValidationError as exc:
+        raise BaselineEvaluationError(
+            f"Host model returned JSON that violates the prediction schema for case {case_id}"
+        ) from exc
 
 
 def build_host_llm() -> StructuredLlmPort:

@@ -146,11 +146,35 @@ def run_baseline_evaluation(
                 f"Host model inference failed for case {case_id}: {type(exc).__name__}"
             ) from exc
 
+        result_chain = [result]
         prediction = getattr(result, "parsed", None)
         if not isinstance(prediction, dict):
             raise BaselineEvaluationError(
                 f"Host model returned invalid structured JSON for case {case_id}"
             )
+
+        violation = _prediction_schema_violation(prediction)
+        if violation is not None:
+            try:
+                repair_result = _repair_prediction_once(
+                    llm,
+                    prediction=prediction,
+                    validation_error=violation,
+                    timeout_seconds=timeout_seconds,
+                    max_tokens=max_tokens,
+                )
+            except Exception as exc:
+                raise BaselineEvaluationError(
+                    f"Host model schema repair failed for case {case_id}: {type(exc).__name__}"
+                ) from exc
+            result_chain.append(repair_result)
+            repaired_prediction = getattr(repair_result, "parsed", None)
+            if not isinstance(repaired_prediction, dict):
+                raise BaselineEvaluationError(
+                    f"Host model schema repair returned invalid JSON for case {case_id}"
+                )
+            prediction = repaired_prediction
+
         _validate_prediction_schema(prediction, case_id=case_id)
         predictions.append(
             {
@@ -159,20 +183,22 @@ def run_baseline_evaluation(
                 "prediction": prediction,
             }
         )
-        provider = str(getattr(result, "provider", "") or "").strip()
-        model = str(getattr(result, "model", "") or "").strip()
-        if provider:
-            providers.add(provider)
-        if model:
-            models.add(model)
-        result_usage = getattr(result, "usage", None)
-        if result_usage is not None:
-            usage["input_tokens"] += int(getattr(result_usage, "input_tokens", 0) or 0)
-            usage["output_tokens"] += int(getattr(result_usage, "output_tokens", 0) or 0)
-            usage["total_tokens"] += int(getattr(result_usage, "total_tokens", 0) or 0)
-            cost = getattr(result_usage, "cost_usd", None)
-            if cost is not None:
-                usage["cost_usd"] += float(cost)
+
+        for call_result in result_chain:
+            provider = str(getattr(call_result, "provider", "") or "").strip()
+            model = str(getattr(call_result, "model", "") or "").strip()
+            if provider:
+                providers.add(provider)
+            if model:
+                models.add(model)
+            result_usage = getattr(call_result, "usage", None)
+            if result_usage is not None:
+                usage["input_tokens"] += int(getattr(result_usage, "input_tokens", 0) or 0)
+                usage["output_tokens"] += int(getattr(result_usage, "output_tokens", 0) or 0)
+                usage["total_tokens"] += int(getattr(result_usage, "total_tokens", 0) or 0)
+                cost = getattr(result_usage, "cost_usd", None)
+                if cost is not None:
+                    usage["cost_usd"] += float(cost)
 
     predictions_path = evaluation_root / "evaluation-predictions.jsonl"
     _write_jsonl_atomic(predictions_path, predictions)
@@ -251,6 +277,46 @@ def _complete_prediction(
     )
 
 
+def _repair_prediction_once(
+    llm: StructuredLlmPort,
+    *,
+    prediction: dict[str, Any],
+    validation_error: str,
+    timeout_seconds: float,
+    max_tokens: int,
+) -> Any:
+    """Give one schema-only repair opportunity without exposing source truth.
+
+    The repair call receives only the model's prior JSON, the public prediction
+    schema and the deterministic validation error. It never receives holdout
+    ground truth or Odoo data. The instruction is intentionally conservative:
+    preserve accounting values and repair structure only.
+    """
+
+    schema_text = json.dumps(PREDICTION_SCHEMA, ensure_ascii=False, sort_keys=True)
+    prior_text = json.dumps(prediction, ensure_ascii=False, sort_keys=True)
+    instructions = (
+        "Repair the supplied accounting prediction so it matches the JSON schema exactly.\n"
+        "Preserve every accounting fact and amount already present. Do not invent new facts, "
+        "amounts, account codes, partners, tax IDs or analytic values. Only repair JSON shape, "
+        "required fields, nulls, arrays, objects and compatible scalar types. Return one JSON "
+        "object only.\n\n"
+        f"Validation error:\n{validation_error}\n\n"
+        f"JSON schema:\n{schema_text}"
+    )
+    return llm.complete_structured(
+        instructions=instructions,
+        input=[{"type": "text", "text": prior_text}],
+        json_schema=None,
+        json_mode=True,
+        schema_name="odoo_journal_prediction_v1_schema_repair",
+        temperature=0.0,
+        max_tokens=max_tokens,
+        timeout=timeout_seconds,
+        purpose="accounting_baseline_schema_repair",
+    )
+
+
 def _is_unsupported_json_schema_response_format(exc: Exception) -> bool:
     if type(exc).__name__ != "BadRequestError":
         return False
@@ -260,7 +326,7 @@ def _is_unsupported_json_schema_response_format(exc: Exception) -> bool:
     )
 
 
-def _validate_prediction_schema(prediction: dict[str, Any], *, case_id: str) -> None:
+def _prediction_schema_violation(prediction: dict[str, Any]) -> str | None:
     try:
         import jsonschema  # type: ignore[import-untyped]
     except ImportError as exc:
@@ -270,9 +336,23 @@ def _validate_prediction_schema(prediction: dict[str, Any], *, case_id: str) -> 
     try:
         jsonschema.validate(prediction, PREDICTION_SCHEMA)
     except jsonschema.ValidationError as exc:
+        path = "$"
+        for part in exc.absolute_path:
+            if isinstance(part, int):
+                path += f"[{part}]"
+            else:
+                path += f".{part}"
+        return f"{path}: {exc.message}"
+    return None
+
+
+def _validate_prediction_schema(prediction: dict[str, Any], *, case_id: str) -> None:
+    violation = _prediction_schema_violation(prediction)
+    if violation is not None:
         raise BaselineEvaluationError(
-            f"Host model returned JSON that violates the prediction schema for case {case_id}"
-        ) from exc
+            f"Host model returned JSON that violates the prediction schema for case "
+            f"{case_id}: {violation}"
+        )
 
 
 def build_host_llm() -> StructuredLlmPort:

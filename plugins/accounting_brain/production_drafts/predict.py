@@ -15,6 +15,11 @@ from plugins.accounting_brain.model_evaluation.baseline_runner import (
     PREDICTION_SCHEMA,
     StructuredLlmPort,
 )
+from plugins.accounting_brain.model_evaluation.company_memory import (
+    CompanyMemoryError,
+    build_memory_hints,
+    derive_company_memory,
+)
 from plugins.accounting_brain.model_evaluation.retrieval import (
     RetrievalError,
     retrieve_historical_examples,
@@ -58,15 +63,17 @@ DRAFT_PREDICTION_SCHEMA["properties"].update(
 
 _DRAFT_INSTRUCTIONS = """You are the Accounting Brain inside Hermes.
 Prepare a DRAFT Odoo journal entry for the CURRENT SOURCE DOCUMENT.
-Historical examples come only from previously validated Gold company history.
-Use them to follow company-specific account, journal, tax, partner and analytic
-conventions, but never copy an amount unless the current document independently
-supports it. Return move_type, accounting date (YYYY-MM-DD), source reference,
-company, journal, partner, currency, taxes and all journal lines. Preserve Odoo
-IDs from historical evidence only when the evidence supports the same entity.
-Return only the requested JSON. The journal must balance exactly. Do not call
-tools, write to Odoo, post, reconcile, pay, delete, or modify any record. A
-human accountant will review the draft before any explicit Odoo create action.
+Historical examples and GITC Accounting Memory come only from previously
+validated Gold company history. Use them to follow the company's exact Odoo
+account IDs/codes, journal IDs, tax IDs, partner conventions, currency IDs,
+debit/credit directions and analytic conventions. Preserve an Odoo ID only when
+the evidence supports the same entity. Never copy a historical monetary amount;
+all monetary amounts must be independently supported by the current document.
+Return move_type, accounting date (YYYY-MM-DD), source reference, company,
+journal, partner, currency, taxes and all journal lines. Return only the requested
+JSON. The journal must balance exactly. Do not call tools, write to Odoo, post,
+reconcile, pay, delete, or modify any record. A human accountant will review the
+draft before any explicit Odoo create action.
 """
 
 
@@ -110,27 +117,39 @@ def prepare_accounting_draft(
             datasets_root,
             permitted_root=home,
         )
+        memory = derive_company_memory(references)
+        memory_hints = build_memory_hints(memory)
         examples = retrieve_historical_examples(
             source_payload,
             references,
             dataset_root=home,
             top_k=max(1, min(10, int(top_k))),
+            include_amounts=False,
         )
         model_inputs = build_model_inputs(source_payload, dataset_root=home)
-    except (ProductionReferenceError, RetrievalError, SourceMaterialError) as exc:
+    except (
+        CompanyMemoryError,
+        ProductionReferenceError,
+        RetrievalError,
+        SourceMaterialError,
+    ) as exc:
         raise DraftPredictionError(str(exc)) from exc
 
+    memory_block = {
+        "type": "text",
+        "text": "GITC ACCOUNTING MEMORY (validated historical rules):\n" + memory_hints,
+    }
     evidence_block = {
         "type": "text",
         "text": (
-            "HISTORICAL GOLD EXAMPLES (evidence only, never current ground truth):\n"
+            "HISTORICAL GOLD EXAMPLES (evidence only; historical amounts withheld):\n"
             + json.dumps(examples, ensure_ascii=False, sort_keys=True)
         ),
     }
     try:
         result = llm.complete_structured(
             instructions=_DRAFT_INSTRUCTIONS,
-            input=[*model_inputs, evidence_block],
+            input=[*model_inputs, memory_block, evidence_block],
             json_schema=DRAFT_PREDICTION_SCHEMA,
             json_mode=True,
             schema_name="odoo_journal_draft_v1",
@@ -166,9 +185,16 @@ def prepare_accounting_draft(
         "prediction": prediction,
         "validation": validation,
         "evidence": {
-            "retrieval_mode": "historical_gold",
+            "retrieval_mode": "gitc_company_memory_plus_historical_gold",
             "retrieved_references": examples,
             "reference_count": len(examples),
+            "company_memory": {
+                "reference_cases": memory.total_reference_cases,
+                "accounts": len(memory.account_catalog),
+                "journals": len(memory.journal_catalog),
+                "currencies": len(memory.currency_catalog),
+                "taxes": len(memory.tax_catalog),
+            },
         },
         "model": {
             "provider": getattr(result, "provider", None),
@@ -179,6 +205,8 @@ def prepare_accounting_draft(
             "auto_post": False,
             "human_review_required": True,
             "source_amounts_require_human_verification": True,
+            "historical_amounts_visible_to_model": False,
+            "company_memory_from_validated_gold_only": True,
         },
         "created_at": datetime.now(timezone.utc).isoformat(),
     }

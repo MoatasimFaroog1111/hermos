@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -48,8 +49,15 @@ def retrieve_historical_examples(
     *,
     dataset_root: Path,
     top_k: int = 5,
+    include_amounts: bool = True,
 ) -> list[dict[str, Any]]:
-    """Return top historical examples using source evidence only for ranking."""
+    """Return top historical examples using source evidence only for ranking.
+
+    ``include_amounts=False`` preserves entity identity and posting direction while
+    withholding historical debit/credit values from the model prompt. This mode is
+    required for grounded holdout evaluation and production draft inference so
+    current-document amounts cannot be contaminated by historical amounts.
+    """
 
     if top_k < 1:
         raise RetrievalError("top_k must be at least 1")
@@ -118,7 +126,9 @@ def retrieve_historical_examples(
             "event_date": row.get("event_date"),
             "retrieval_score": round(score, 6),
             "source_summary": _source_summary(row.get("source")),
-            "historical_posting": _compact_target(row.get("target")),
+            "historical_posting": _compact_target(
+                row.get("target"), include_amounts=include_amounts
+            ),
         }
         for score, row in selected
     ]
@@ -175,7 +185,11 @@ def _source_summary(source: Any) -> dict[str, Any]:
     }
 
 
-def _compact_target(target: Any) -> dict[str, Any]:
+def _compact_target(
+    target: Any,
+    *,
+    include_amounts: bool = True,
+) -> dict[str, Any]:
     if not isinstance(target, dict):
         return {}
     lines = target.get("journal_entry")
@@ -184,20 +198,22 @@ def _compact_target(target: Any) -> dict[str, Any]:
         for line in lines:
             if not isinstance(line, dict):
                 continue
-            compact_lines.append(
-                {
-                    "account_id": line.get("account_id"),
-                    "account_code": line.get("account_code"),
-                    "account_name": line.get("account_name"),
-                    "partner_id": line.get("partner_id"),
-                    "partner_name": line.get("partner_name"),
-                    "label": line.get("label"),
-                    "debit": line.get("debit"),
-                    "credit": line.get("credit"),
-                    "tax_ids": line.get("tax_ids") or [],
-                    "analytic_distribution": line.get("analytic_distribution") or {},
-                }
-            )
+            compact_line: dict[str, Any] = {
+                "account_id": line.get("account_id"),
+                "account_code": line.get("account_code"),
+                "account_name": line.get("account_name"),
+                "partner_id": line.get("partner_id"),
+                "partner_name": line.get("partner_name"),
+                "label": line.get("label"),
+                "tax_ids": line.get("tax_ids") or [],
+                "analytic_distribution": line.get("analytic_distribution") or {},
+            }
+            if include_amounts:
+                compact_line["debit"] = line.get("debit")
+                compact_line["credit"] = line.get("credit")
+            else:
+                compact_line["direction"] = _posting_direction(line)
+            compact_lines.append(compact_line)
     return {
         "move_type": target.get("move_type"),
         "date": target.get("date"),
@@ -209,3 +225,22 @@ def _compact_target(target: Any) -> dict[str, Any]:
         "taxes": target.get("taxes") or [],
         "journal_entry": compact_lines,
     }
+
+
+def _posting_direction(line: dict[str, Any]) -> str:
+    debit = _decimal(line.get("debit"))
+    credit = _decimal(line.get("credit"))
+    if debit > 0 and credit == 0:
+        return "debit"
+    if credit > 0 and debit == 0:
+        return "credit"
+    if debit == 0 and credit == 0:
+        return "zero"
+    return "mixed"
+
+
+def _decimal(value: Any) -> Decimal:
+    try:
+        return Decimal(str(value or "0"))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal("0")

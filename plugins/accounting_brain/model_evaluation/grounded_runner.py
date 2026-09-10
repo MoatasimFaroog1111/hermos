@@ -1,17 +1,10 @@
-"""Grounded evaluation using company memory + retrieval + DeepSeek fallback.
+"""Leakage-safe grounded Accounting Brain evaluation.
 
-Safety contract: Reads ONLY evaluation-inputs.jsonl and evaluation-reference.jsonl.
-NEVER reads evaluation-ground-truth.jsonl during inference. Predictions are written
-to disk before deterministic scorer is invoked on ground truth.
-
-Flow:
-1. Derive company_memory from reference pool (non-holdout only)
-2. For each case: build current document context + retrieve examples + build hints
-3. Call LLM with json_schema; fallback to json_object if schema unsupported
-4. Apply one schema-only repair (structure, not logic)
-5. Validate schema locally
-6. Write prediction to disk
-7. Call existing score_latest_evaluation (which opens ground truth)
+Inference reads only the current holdout source evidence and the non-holdout
+Gold reference pool. It derives deterministic GITC company memory, retrieves
+similar historical examples, fixes predictions to disk, and only then hands the
+run to the existing trusted scorer. The scorer remains the sole component that
+opens holdout ground truth and the sole source of the production-gate result.
 """
 
 from __future__ import annotations
@@ -24,9 +17,13 @@ from typing import Any, Callable
 from plugins.accounting_brain.model_evaluation.baseline_runner import (
     PREDICTION_SCHEMA,
     StructuredLlmPort,
+    _is_unsupported_json_schema_response_format,
     _latest_evaluation_root,
     _load_json,
     _load_jsonl,
+    _prediction_schema_violation,
+    _repair_prediction_once,
+    _validate_prediction_schema,
     _write_jsonl_atomic,
 )
 from plugins.accounting_brain.model_evaluation.company_memory import (
@@ -34,13 +31,13 @@ from plugins.accounting_brain.model_evaluation.company_memory import (
     build_memory_hints,
     derive_company_memory,
 )
+from plugins.accounting_brain.model_evaluation.evaluate import (
+    EvaluationRunError,
+    score_latest_evaluation,
+)
 from plugins.accounting_brain.model_evaluation.retrieval import (
     RetrievalError,
     retrieve_historical_examples,
-)
-from plugins.accounting_brain.model_evaluation.scoring import (
-    aggregate_evaluation_scores,
-    score_journal_prediction,
 )
 from plugins.accounting_brain.model_evaluation.source_material import (
     SourceMaterialError,
@@ -49,121 +46,33 @@ from plugins.accounting_brain.model_evaluation.source_material import (
 
 
 class GroundedEvaluationError(RuntimeError):
-    """Raised when grounded evaluation fails."""
+    """Raised when grounded evaluation cannot complete safely."""
 
 
 ProgressCallback = Callable[[dict[str, Any]], None]
 
 _GROUNDED_INSTRUCTIONS = """You are the Accounting Brain inside Hermes.
-Infer the complete Odoo journal entry from the CURRENT SOURCE DOCUMENT.
+Infer the complete Odoo journal entry represented by the CURRENT SOURCE DOCUMENT.
 
-You have:
-1. COMPANY MEMORY: Consensus patterns from historical Gold entries (no amounts).
-2. HISTORICAL EXAMPLES: Retrieved similar past entries from Gold history (no
-   amounts).
+You receive two kinds of company-specific evidence, both derived only from
+EARLIER validated Gold history that is outside the holdout:
+1. GITC ACCOUNTING MEMORY: exact Odoo entity IDs, chart-of-account conventions,
+   journal/move-type relationships, currencies, taxes, debit/credit direction
+   priors, partner prevalence and analytic patterns.
+2. RETRIEVED HISTORICAL EXAMPLES: similar earlier postings with their validated
+   Odoo targets.
 
-Use company memory and examples ONLY for:
-- Identifying applicable journals, move types, and accounts for this company
-- Understanding currency and tax conventions
-- Recognizing partner relationships and analytic patterns
-- Learning debit/credit direction conventions per account
+Use that evidence to choose exact GITC account codes/IDs, journal IDs, partner
+IDs when supported by the current document, currency IDs, tax IDs and analytic
+conventions. Preserve an Odoo ID only when the evidence supports the same entity.
+Never copy a monetary amount from historical evidence. Every debit/credit amount
+must be independently supported by the CURRENT SOURCE DOCUMENT. Do not invent an
+unsupported amount. The entry must balance exactly.
 
-CRITICAL: Never copy amounts from historical examples. Amounts come ONLY
-from the current source document. The entry must balance exactly.
-
-Return only the requested JSON. Use two-decimal debit/credit strings.
-This is draft-only evaluation: do not call tools, access Odoo, post, or
-modify records.
+Return only the requested JSON structure. Use two-decimal debit/credit values.
+This is a draft-only evaluation: do not call tools, access Odoo, post, reconcile,
+pay, delete, or modify any accounting record. Human review remains required.
 """
-
-
-class GroundedEvaluationTelemetry:
-    """Track tokens, cost, repairs, and timing (equivalent to baseline runner)."""
-
-    def __init__(self) -> None:
-        self.total_cases = 0
-        self.successful_cases = 0
-        self.fallback_cases = 0
-        self.repair_cases = 0
-        self.error_cases = 0
-
-        self.input_tokens = 0
-        self.output_tokens = 0
-        self.total_tokens = 0
-        self.cost_usd = 0.0
-
-        self.retrieval_counts: list[int] = []
-        self.start_time = time.time()
-        self.end_time: float | None = None
-
-    def record_case(
-        self,
-        success: bool,
-        fallback: bool = False,
-        repair: bool = False,
-        error: bool = False,
-        tokens: int = 0,
-        cost: float = 0.0,
-        retrieval_count: int = 0,
-    ) -> None:
-        """Record metrics for one case."""
-        self.total_cases += 1
-        if success:
-            self.successful_cases += 1
-        if fallback:
-            self.fallback_cases += 1
-        if repair:
-            self.repair_cases += 1
-        if error:
-            self.error_cases += 1
-
-        self.total_tokens += tokens
-        self.cost_usd += cost
-        self.input_tokens += tokens // 2 if tokens > 0 else 0
-        self.output_tokens += tokens // 2 if tokens > 0 else 0
-        self.retrieval_counts.append(retrieval_count)
-
-    def finalize(self) -> dict[str, Any]:
-        """Produce final telemetry report."""
-        self.end_time = time.time()
-        elapsed = self.end_time - self.start_time
-
-        avg_retrieval = (
-            sum(self.retrieval_counts) / len(self.retrieval_counts)
-            if self.retrieval_counts
-            else 0.0
-        )
-
-        return {
-            "stage": "grounded_evaluation_complete",
-            "ok": self.total_cases > 0,
-            "total_cases": self.total_cases,
-            "successful_cases": self.successful_cases,
-            "success_rate": (
-                round(self.successful_cases / self.total_cases, 4)
-                if self.total_cases > 0
-                else 0.0
-            ),
-            "fallback_cases": self.fallback_cases,
-            "repair_cases": self.repair_cases,
-            "error_cases": self.error_cases,
-            "tokens": {
-                "input": self.input_tokens,
-                "output": self.output_tokens,
-                "total": self.total_tokens,
-            },
-            "cost_usd": round(self.cost_usd, 4),
-            "retrieval": {
-                "avg_per_case": round(avg_retrieval, 2),
-                "total_retrieved": sum(self.retrieval_counts),
-            },
-            "timing": {
-                "elapsed_seconds": round(elapsed, 2),
-                "cases_per_second": (
-                    round(self.total_cases / elapsed, 2) if elapsed > 0 else 0.0
-                ),
-            },
-        }
 
 
 def run_grounded_evaluation(
@@ -175,316 +84,366 @@ def run_grounded_evaluation(
     max_tokens: int = 1800,
     progress_callback: ProgressCallback | None = None,
 ) -> dict[str, Any]:
-    """Run grounded evaluation with company memory + retrieval.
-
-    Args:
-        datasets_root: Root of Accounting Brain datasets
-        llm: Structured LLM compliant with StructuredLlmPort
-        top_k: Number of historical examples to retrieve per case
-        timeout_seconds: LLM call timeout
-        max_tokens: Max response tokens
-        progress_callback: Optional progress updates
-
-    Returns:
-        Telemetry and report
-
-    Raises:
-        GroundedEvaluationError: If evaluation cannot proceed safely
-    """
-
-    # Load ONLY inputs + reference (NEVER ground truth at this stage)
+    """Run every holdout case with GITC memory + leakage-safe Gold retrieval."""
+    started = time.monotonic()
     evaluation_root = _latest_evaluation_root(Path(datasets_root))
     manifest = _load_json(evaluation_root / "evaluation-manifest.json")
-    if (
-        manifest.get("ok") is not True
-        or manifest.get("stage") != "EVALUATION_DATA_READY"
-    ):
-        raise GroundedEvaluationError("Evaluation must be EVALUATION_DATA_READY")
+    if manifest.get("ok") is not True or manifest.get("stage") != "EVALUATION_DATA_READY":
+        raise GroundedEvaluationError(
+            "Prepare leakage-safe evaluation evidence before grounded evaluation"
+        )
 
     contract_version = str(manifest.get("contract_version") or "")
-    dataset_root = evaluation_root.parent
-
     input_rows = _load_jsonl(evaluation_root / "evaluation-inputs.jsonl")
     reference_rows = _load_jsonl(evaluation_root / "evaluation-reference.jsonl")
-
     if not input_rows:
-        raise GroundedEvaluationError("No model inputs")
+        raise GroundedEvaluationError("Prepared evaluation contains no model inputs")
     if not reference_rows:
-        raise GroundedEvaluationError("No reference pool")
+        raise GroundedEvaluationError(
+            "Prepare the leakage-safe historical reference pool before grounded evaluation"
+        )
 
-    # Derive company memory once from reference only
     try:
         memory = derive_company_memory(reference_rows)
     except CompanyMemoryError as exc:
-        raise GroundedEvaluationError(f"Cannot derive memory: {exc}") from exc
+        raise GroundedEvaluationError(f"Cannot derive GITC company memory: {exc}") from exc
 
-    telemetry = GroundedEvaluationTelemetry()
+    memory_hints = build_memory_hints(memory)
+    dataset_root = evaluation_root.parent
     predictions: list[dict[str, Any]] = []
-    memory_hint = build_memory_hints(memory)
+    retrieval_counts: list[int] = []
+    repairs_attempted = 0
+    json_schema_fallbacks = 0
+    providers: set[str] = set()
+    models: set[str] = set()
+    usage: dict[str, float | int] = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cost_usd": 0.0,
+    }
+
+    _emit_progress(
+        progress_callback,
+        phase="initialized",
+        total_cases=len(input_rows),
+        completed_cases=0,
+        current_case=None,
+        reference_cases=len(reference_rows),
+        memory_accounts=len(memory.account_catalog),
+        elapsed_seconds=0.0,
+        repairs_attempted=0,
+        json_schema_fallbacks=0,
+    )
 
     for row in input_rows:
+        case_started = time.monotonic()
         case_id = str(row.get("case_id") or "").strip()
         if not case_id:
-            raise GroundedEvaluationError("No case_id in input")
-
+            raise GroundedEvaluationError("Evaluation input contains no case_id")
         if str(row.get("contract_version") or "") != contract_version:
-            raise GroundedEvaluationError(f"Contract mismatch: {case_id}")
-
+            raise GroundedEvaluationError(f"Contract mismatch for case {case_id}")
         source = row.get("source")
         if not isinstance(source, dict):
-            raise GroundedEvaluationError(f"No source for {case_id}")
+            raise GroundedEvaluationError(f"Missing source for case {case_id}")
 
-        # Build current document context + retrieve historical examples
+        _emit_progress(
+            progress_callback,
+            phase="case_started",
+            total_cases=len(input_rows),
+            completed_cases=len(predictions),
+            current_case=case_id,
+            elapsed_seconds=round(time.monotonic() - started, 3),
+            repairs_attempted=repairs_attempted,
+            json_schema_fallbacks=json_schema_fallbacks,
+        )
+
         try:
-            current_blocks = build_model_inputs(
-                source, dataset_root=dataset_root
-            )
+            current_blocks = build_model_inputs(source, dataset_root=dataset_root)
             examples = retrieve_historical_examples(
                 source,
                 reference_rows,
                 dataset_root=dataset_root,
-                top_k=top_k,
+                top_k=max(1, min(10, int(top_k))),
             )
         except (SourceMaterialError, RetrievalError) as exc:
             raise GroundedEvaluationError(
-                f"Retrieval failed for {case_id}: {exc}"
+                f"Grounded source preparation failed for {case_id}: {exc}"
             ) from exc
 
-        # Construct LLM input
-        memory_block = {
-            "type": "text",
-            "text": f"COMPANY MEMORY:\n{memory_hint}",
-        }
-        examples_block = {
-            "type": "text",
-            "text": (
-                "HISTORICAL EXAMPLES:\n"
-                + json.dumps(examples, ensure_ascii=False, sort_keys=True)
-            ),
-        }
-        input_blocks = [*current_blocks, memory_block, examples_block]
+        retrieval_counts.append(len(examples))
+        evidence_blocks = [
+            {
+                "type": "text",
+                "text": "GITC ACCOUNTING MEMORY:\n" + memory_hints,
+            },
+            {
+                "type": "text",
+                "text": (
+                    "RETRIEVED EARLIER GOLD EXAMPLES "
+                    "(not current holdout ground truth):\n"
+                    + json.dumps(examples, ensure_ascii=False, sort_keys=True)
+                ),
+            },
+        ]
 
-        # Try json_schema first; fallback to json_object
-        prediction = None
-        fallback_used = False
-        repair_needed = False
-        error = False
+        model_call_started = time.monotonic()
+        try:
+            result, fallback_used = _complete_grounded_prediction(
+                llm,
+                model_inputs=[*current_blocks, *evidence_blocks],
+                timeout_seconds=timeout_seconds,
+                max_tokens=max_tokens,
+            )
+        except Exception as exc:
+            raise GroundedEvaluationError(
+                f"Host model inference failed for case {case_id}: {type(exc).__name__}"
+            ) from exc
+        last_model_call_duration = round(time.monotonic() - model_call_started, 3)
+        if fallback_used:
+            json_schema_fallbacks += 1
+
+        result_chain = [result]
+        prediction = getattr(result, "parsed", None)
+        if not isinstance(prediction, dict):
+            raise GroundedEvaluationError(
+                f"Host model returned invalid structured JSON for case {case_id}"
+            )
+
+        violation = _prediction_schema_violation(prediction)
+        if violation is not None:
+            repairs_attempted += 1
+            _emit_progress(
+                progress_callback,
+                phase="schema_repair",
+                total_cases=len(input_rows),
+                completed_cases=len(predictions),
+                current_case=case_id,
+                validation_error=violation,
+                elapsed_seconds=round(time.monotonic() - started, 3),
+                repairs_attempted=repairs_attempted,
+                json_schema_fallbacks=json_schema_fallbacks,
+            )
+            repair_started = time.monotonic()
+            try:
+                repair_result = _repair_prediction_once(
+                    llm,
+                    prediction=prediction,
+                    validation_error=violation,
+                    timeout_seconds=timeout_seconds,
+                    max_tokens=max_tokens,
+                )
+            except Exception as exc:
+                raise GroundedEvaluationError(
+                    f"Host model schema repair failed for case {case_id}: "
+                    f"{type(exc).__name__}"
+                ) from exc
+            last_model_call_duration = round(time.monotonic() - repair_started, 3)
+            result_chain.append(repair_result)
+            repaired = getattr(repair_result, "parsed", None)
+            if not isinstance(repaired, dict):
+                raise GroundedEvaluationError(
+                    f"Schema repair returned invalid JSON for case {case_id}"
+                )
+            prediction = repaired
 
         try:
-            result = llm.complete_structured(
-                instructions=_GROUNDED_INSTRUCTIONS,
-                input=input_blocks,
-                json_schema=PREDICTION_SCHEMA,
-                json_mode=True,
-                schema_name="odoo_journal_prediction_v1",
-                temperature=0.0,
-                max_tokens=max_tokens,
-                timeout=timeout_seconds,
-                purpose="accounting_grounded_evaluation",
-            )
-            prediction = getattr(result, "parsed", None)
+            _validate_prediction_schema(prediction, case_id=case_id)
         except Exception as exc:
-            if "json_schema" in str(exc).lower():
-                fallback_used = True
-                try:
-                    result = llm.complete_structured(
-                        instructions=_GROUNDED_INSTRUCTIONS,
-                        input=input_blocks,
-                        json_mode=True,
-                        temperature=0.0,
-                        max_tokens=max_tokens,
-                        timeout=timeout_seconds,
-                        purpose="accounting_grounded_evaluation",
-                    )
-                    prediction = getattr(result, "parsed", None)
-                except Exception as inner_exc:
-                    error = True
-                    raise GroundedEvaluationError(
-                        f"Both json_schema and json_object failed for "
-                        f"{case_id}: {type(inner_exc).__name__}"
-                    ) from inner_exc
-            else:
-                error = True
-                raise GroundedEvaluationError(
-                    f"LLM inference failed for {case_id}: {type(exc).__name__}"
-                ) from exc
+            raise GroundedEvaluationError(str(exc)) from exc
 
-        if not isinstance(prediction, dict):
-            error = True
-            raise GroundedEvaluationError(f"Invalid JSON for {case_id}")
-
-        # Apply one schema-only repair (structure, not logic)
-        prediction, repair_needed = _repair_schema_only(prediction)
-
-        # Validate schema locally
-        schema_valid = _validate_schema_locally(prediction)
-
-        # Record telemetry
-        usage = getattr(result, "usage", None)
-        tokens = getattr(usage, "total_tokens", 0) if usage else 0
-        cost = getattr(usage, "cost_usd", 0.0) if usage else 0.0
-
-        telemetry.record_case(
-            success=schema_valid and not error,
-            fallback=fallback_used,
-            repair=repair_needed,
-            error=error,
-            tokens=tokens,
-            cost=cost,
-            retrieval_count=len(examples),
+        predictions.append(
+            {
+                "contract_version": contract_version,
+                "case_id": case_id,
+                "prediction": prediction,
+                "retrieval": {
+                    "reference_ids": [item.get("reference_id") for item in examples],
+                    "reference_count": len(examples),
+                },
+                "grounding": {
+                    "company_memory": True,
+                    "memory_reference_cases": len(reference_rows),
+                },
+            }
         )
 
-        predictions.append({
-            "contract_version": contract_version,
-            "case_id": case_id,
-            "prediction": prediction,
-            "retrieval": {
-                "reference_count": len(examples),
-                "reference_ids": [ex.get("reference_id") for ex in examples],
-            },
-            "grounded": {
-                "fallback_used": fallback_used,
-                "repair_applied": repair_needed,
-                "schema_valid": schema_valid,
-            },
-        })
+        for call_result in result_chain:
+            _accumulate_usage(usage, call_result)
+            provider = str(getattr(call_result, "provider", "") or "").strip()
+            model = str(getattr(call_result, "model", "") or "").strip()
+            if provider:
+                providers.add(provider)
+            if model:
+                models.add(model)
 
-        if progress_callback:
-            progress_callback({
-                "case": case_id,
-                "index": len(predictions),
-                "total": len(input_rows),
-            })
+        _emit_progress(
+            progress_callback,
+            phase="case_completed",
+            total_cases=len(input_rows),
+            completed_cases=len(predictions),
+            current_case=case_id,
+            reference_count=len(examples),
+            elapsed_seconds=round(time.monotonic() - started, 3),
+            case_duration_seconds=round(time.monotonic() - case_started, 3),
+            last_model_call_duration_seconds=last_model_call_duration,
+            repairs_attempted=repairs_attempted,
+            json_schema_fallbacks=json_schema_fallbacks,
+            providers=sorted(providers),
+            models=sorted(models),
+            total_tokens=int(usage["total_tokens"]),
+            cost_usd=round(float(usage["cost_usd"]), 6),
+        )
 
-    # Write predictions to disk BEFORE calling deterministic scorer
-    output_path = evaluation_root / "evaluation-grounded-predictions.jsonl"
-    _write_jsonl_atomic(output_path, predictions)
-
-    # Now call deterministic scorer (which opens ground truth)
-    # Safe because ground truth was never used in inference
-    scores: list[dict[str, Any]] = []
-    truth_rows = _load_jsonl(evaluation_root / "evaluation-ground-truth.jsonl")
-    truth_by_case = {row.get("case_id"): row for row in truth_rows}
-
-    for pred in predictions:
-        case_id = pred.get("case_id")
-        truth_row = truth_by_case.get(case_id)
-        if not truth_row:
-            continue
-
-        expected = truth_row.get("target", {})
-        predicted = pred.get("prediction", {})
-        score = score_journal_prediction(expected, predicted)
-        score["case_id"] = case_id
-        scores.append(score)
-
-    score_summary = aggregate_evaluation_scores(scores)
-    telemetry_report = telemetry.finalize()
-
-    # Write grounded evaluation report
-    report = {
-        "ok": True,
-        "stage": "grounded_evaluation_complete",
-        "contract_version": contract_version,
-        "company_memory": memory.to_dict(),
-        "predictions_count": len(predictions),
-        "scores_count": len(scores),
-        "telemetry": telemetry_report,
-        "scoring": score_summary,
-        "artifact": output_path.name,
-    }
-
-    report_path = evaluation_root / "grounded-evaluation-report.json"
-    report_path.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    # This exact filename is the trusted scorer contract. Predictions are fixed
+    # before score_latest_evaluation is invoked; inference never opens truth.
+    _write_jsonl_atomic(
+        evaluation_root / "evaluation-predictions.jsonl",
+        predictions,
     )
 
-    return report
+    _emit_progress(
+        progress_callback,
+        phase="scoring",
+        total_cases=len(input_rows),
+        completed_cases=len(predictions),
+        current_case=None,
+        elapsed_seconds=round(time.monotonic() - started, 3),
+        repairs_attempted=repairs_attempted,
+        json_schema_fallbacks=json_schema_fallbacks,
+    )
+
+    try:
+        score_report = score_latest_evaluation(Path(datasets_root))
+    except EvaluationRunError as exc:
+        raise GroundedEvaluationError(f"Deterministic scoring failed: {exc}") from exc
+
+    _emit_progress(
+        progress_callback,
+        phase="completed",
+        total_cases=len(input_rows),
+        completed_cases=len(predictions),
+        current_case=None,
+        stage=score_report.get("stage"),
+        ok=bool(score_report.get("ok")),
+        elapsed_seconds=round(time.monotonic() - started, 3),
+        repairs_attempted=repairs_attempted,
+        json_schema_fallbacks=json_schema_fallbacks,
+    )
+
+    return {
+        "ok": bool(score_report.get("ok")),
+        "stage": score_report.get("stage"),
+        "mode": "gitc_company_memory_retrieval",
+        "cases": len(predictions),
+        "reference_cases": len(reference_rows),
+        "memory": {
+            "accounts": len(memory.account_catalog),
+            "journals": len(memory.journal_catalog),
+            "currencies": len(memory.currency_catalog),
+            "taxes": len(memory.tax_catalog),
+            "partners": len(memory.partner_catalog),
+        },
+        "retrieval": {
+            "top_k": max(1, min(10, int(top_k))),
+            "average_references": round(
+                sum(retrieval_counts) / len(retrieval_counts), 4
+            )
+            if retrieval_counts
+            else 0.0,
+        },
+        "repairs_attempted": repairs_attempted,
+        "json_schema_fallbacks": json_schema_fallbacks,
+        "providers": sorted(providers),
+        "models": sorted(models),
+        "usage": {
+            "input_tokens": int(usage["input_tokens"]),
+            "output_tokens": int(usage["output_tokens"]),
+            "total_tokens": int(usage["total_tokens"]),
+            "cost_usd": round(float(usage["cost_usd"]), 6),
+        },
+        "score_report": score_report,
+        "production_gate": score_report.get("production_gate"),
+        "safety": {
+            "holdout_ground_truth_visible_to_model": False,
+            "reference_pool_is_non_holdout_history": True,
+            "company_memory_is_non_holdout_history": True,
+            "predictions_fixed_before_scoring": True,
+            "odoo_mutations": False,
+            "auto_post": False,
+            "human_review_required": True,
+        },
+    }
 
 
-def _repair_schema_only(
-    prediction: dict[str, Any],
-) -> tuple[dict[str, Any], bool]:
-    """Apply one schema-only repair step (structure, not logic).
+def _complete_grounded_prediction(
+    llm: StructuredLlmPort,
+    *,
+    model_inputs: list[dict[str, Any]],
+    timeout_seconds: float,
+    max_tokens: int,
+) -> tuple[Any, bool]:
+    common = {
+        "input": model_inputs,
+        "json_mode": True,
+        "schema_name": "odoo_journal_prediction_v1",
+        "temperature": 0.0,
+        "max_tokens": max(256, min(4096, int(max_tokens))),
+        "timeout": max(15.0, min(300.0, float(timeout_seconds))),
+        "purpose": "accounting_grounded_evaluation",
+    }
+    try:
+        return (
+            llm.complete_structured(
+                instructions=_GROUNDED_INSTRUCTIONS,
+                json_schema=PREDICTION_SCHEMA,
+                **common,
+            ),
+            False,
+        )
+    except Exception as exc:
+        if not _is_unsupported_json_schema_response_format(exc):
+            raise
 
-    - Ensures journal_entry is a list
-    - Adds missing required fields with structural defaults
-    - Converts numeric debit/credit to ".2f" strings
-
-    Returns: (repaired_prediction, repair_was_needed)
-    """
-    repair_needed = False
-
-    if not isinstance(prediction.get("journal_entry"), list):
-        prediction["journal_entry"] = []
-        repair_needed = True
-
-    lines = prediction.get("journal_entry", [])
-    for line in lines:
-        if not isinstance(line, dict):
-            continue
-
-        # Ensure debit/credit exist and are strings
-        for field in ["debit", "credit"]:
-            value = line.get(field)
-            if value is None:
-                line[field] = "0.00"
-                repair_needed = True
-            elif not isinstance(value, str):
-                try:
-                    line[field] = f"{float(value):.2f}"
-                    repair_needed = True
-                except (ValueError, TypeError):
-                    line[field] = "0.00"
-                    repair_needed = True
-
-        # Ensure tax_ids and analytic_distribution exist
-        if not isinstance(line.get("tax_ids"), list):
-            line["tax_ids"] = []
-            repair_needed = True
-
-        if not isinstance(line.get("analytic_distribution"), dict):
-            line["analytic_distribution"] = {}
-            repair_needed = True
-
-    return prediction, repair_needed
+    schema_text = json.dumps(PREDICTION_SCHEMA, ensure_ascii=False, sort_keys=True)
+    fallback_instructions = (
+        f"{_GROUNDED_INSTRUCTIONS}\n\n"
+        "Return one JSON object matching this schema exactly.\n"
+        f"JSON schema:\n{schema_text}"
+    )
+    return (
+        llm.complete_structured(
+            instructions=fallback_instructions,
+            json_schema=None,
+            **common,
+        ),
+        True,
+    )
 
 
-def _validate_schema_locally(prediction: dict[str, Any]) -> bool:
-    """Local schema validation without calling LLM.
+def _accumulate_usage(usage: dict[str, float | int], result: Any) -> None:
+    result_usage = getattr(result, "usage", None)
+    if result_usage is None:
+        return
+    usage["input_tokens"] = int(usage["input_tokens"]) + int(
+        getattr(result_usage, "input_tokens", 0) or 0
+    )
+    usage["output_tokens"] = int(usage["output_tokens"]) + int(
+        getattr(result_usage, "output_tokens", 0) or 0
+    )
+    usage["total_tokens"] = int(usage["total_tokens"]) + int(
+        getattr(result_usage, "total_tokens", 0) or 0
+    )
+    cost = getattr(result_usage, "cost_usd", None)
+    if cost is not None:
+        usage["cost_usd"] = float(usage["cost_usd"]) + float(cost)
 
-    Returns: True if schema is valid, False otherwise.
-    """
-    if not isinstance(prediction, dict):
-        return False
 
-    required = [
-        "move_type",
-        "journal",
-        "partner",
-        "currency",
-        "taxes",
-        "journal_entry",
-    ]
-    if not all(field in prediction for field in required):
-        return False
-
-    lines = prediction.get("journal_entry")
-    if not isinstance(lines, list) or len(lines) < 2:
-        return False
-
-    for line in lines:
-        if not isinstance(line, dict):
-            return False
-        line_required = [
-            "account_code",
-            "debit",
-            "credit",
-            "tax_ids",
-            "analytic_distribution",
-        ]
-        if not all(field in line for field in line_required):
-            return False
-
-    return True
+def _emit_progress(callback: ProgressCallback | None, **progress: Any) -> None:
+    if callback is None:
+        return
+    try:
+        callback(dict(progress))
+    except Exception:
+        # Telemetry must never be able to alter accounting evaluation behavior.
+        return

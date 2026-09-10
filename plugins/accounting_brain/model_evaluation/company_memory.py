@@ -154,10 +154,9 @@ def derive_company_memory(reference_rows: list[dict[str, Any]]) -> CompanyMemory
         if journal_label:
             memory.journals[journal_label] += 1
         if journal_key and move_type:
-            memory.journal_catalog[journal_key]["move_type_usage"][move_type] = (
-                int(memory.journal_catalog[journal_key]["move_type_usage"].get(move_type, 0))
-                + 1
-            )
+            journal_entry = memory.journal_catalog[journal_key]
+            move_type_usage = journal_entry.setdefault("move_type_usage", {})
+            move_type_usage[move_type] = int(move_type_usage.get(move_type, 0)) + 1
             memory.journal_move_type_pairs[(journal_key, move_type)] += 1
             memory.move_type_journal_pairs[(move_type, journal_key)] += 1
 

@@ -124,6 +124,7 @@ def prepare_accounting_draft(
             references,
             dataset_root=home,
             top_k=max(1, min(10, int(top_k))),
+            include_amounts=False,
         )
         model_inputs = build_model_inputs(source_payload, dataset_root=home)
     except (
@@ -141,7 +142,7 @@ def prepare_accounting_draft(
     evidence_block = {
         "type": "text",
         "text": (
-            "HISTORICAL GOLD EXAMPLES (evidence only, never current ground truth):\n"
+            "HISTORICAL GOLD EXAMPLES (evidence only; historical amounts withheld):\n"
             + json.dumps(examples, ensure_ascii=False, sort_keys=True)
         ),
     }
@@ -204,6 +205,7 @@ def prepare_accounting_draft(
             "auto_post": False,
             "human_review_required": True,
             "source_amounts_require_human_verification": True,
+            "historical_amounts_visible_to_model": False,
             "company_memory_from_validated_gold_only": True,
         },
         "created_at": datetime.now(timezone.utc).isoformat(),

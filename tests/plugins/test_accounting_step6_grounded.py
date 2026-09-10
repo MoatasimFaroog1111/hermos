@@ -1,414 +1,426 @@
-"""Tests for STEP 6 grounded evaluation: leakage safety, memory derivation, runner.
-
-Tests verify:
-- Company memory derives ONLY from non-holdout reference rows
-- No amounts leaked into memory hints
-- Journal→move_type and move_type→journal conditional frequencies correct
-- Account debit/credit direction preferences from historical usage
-- DeepSeek json_schema → json_object fallback
-- Schema repair (structure only, no logic)
-- Deterministic schema validation
-- Telemetry fail-open (no exceptions on missing usage)
-- Runner never reads ground truth during inference
-"""
+"""STEP 6 tests for leakage-safe GITC memory and grounded evaluation."""
 
 from __future__ import annotations
 
 import json
-from typing import Any
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from plugins.accounting_brain.model_evaluation import grounded_runner
 from plugins.accounting_brain.model_evaluation.company_memory import (
+    CompanyMemory,
     build_memory_hints,
     derive_company_memory,
 )
 from plugins.accounting_brain.model_evaluation.grounded_runner import (
-    GroundedEvaluationTelemetry,
-    _repair_schema_only,
-    _validate_schema_locally,
+    run_grounded_evaluation,
+)
+from plugins.accounting_brain.production_drafts.predict import (
+    prepare_accounting_draft,
 )
 
 
-def _ref_row(move_id: int, journal: str = "MISC", move_type: str = "entry") -> dict[str, Any]:
-    """Create a minimal reference row (non-holdout Gold)."""
+def _write_json(path: Path, payload: dict) -> None:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+
+def _prediction() -> dict:
     return {
-        "contract_version": "1.0",
-        "reference_id": f"move-{move_id}",
-        "source_move_id": move_id,  # Present in reference, but memory should not expose it
-        "target": {
-            "move_type": move_type,
-            "journal": {"name": journal, "code": journal.lower()},
-            "partner": {"id": 100} if move_id % 2 == 0 else None,
-            "currency": {"name": "SAR", "code": "SAR"},
-            "taxes": [{"name": "VAT 15%", "id": 1}] if move_id % 3 == 0 else [],
-            "journal_entry": [
-                {
-                    "account_code": "510000",
-                    "account_name": "Expense Materials",
-                    "account_id": 100,
-                    "debit": "100.00",
-                    "credit": "0.00",
-                    "tax_ids": [],
-                    "analytic_distribution": {"department": 50} if move_id % 2 == 1 else {},
-                },
-                {
-                    "account_code": "211000",
-                    "account_name": "Accounts Payable",
-                    "account_id": 200,
-                    "debit": "0.00",
-                    "credit": "100.00",
-                    "tax_ids": [],
-                    "analytic_distribution": {},
-                },
-            ],
-        },
+        "move_type": "entry",
+        "journal": {"id": 7, "code": "MISC", "name": "Miscellaneous"},
+        "partner": {"id": 90, "name": "Supplier A"},
+        "currency": {"id": 1, "name": "SAR"},
+        "taxes": [{"id": 14, "name": "VAT 15%"}],
+        "journal_entry": [
+            {
+                "account_id": 501,
+                "account_code": "510000",
+                "account_name": "Materials Expense",
+                "partner_id": 90,
+                "partner_name": "Supplier A",
+                "label": "Materials",
+                "debit": "100.00",
+                "credit": "0.00",
+                "tax_ids": [14],
+                "analytic_distribution": {"11": 100},
+            },
+            {
+                "account_id": 201,
+                "account_code": "211000",
+                "account_name": "Accounts Payable",
+                "partner_id": 90,
+                "partner_name": "Supplier A",
+                "label": "Payable",
+                "debit": "0.00",
+                "credit": "100.00",
+                "tax_ids": [],
+                "analytic_distribution": {},
+            },
+        ],
     }
 
 
-class TestCompanyMemoryLeakageSafety:
-    """Verify memory derivation is safe and never exposes holdout facts."""
-
-    def test_memory_derives_from_reference_only(self) -> None:
-        """Memory must derive from reference rows only (never opens ground truth)."""
-        reference = [_ref_row(i) for i in range(1, 4)]
-        memory = derive_company_memory(reference)
-
-        # Verify totals
-        assert memory.total_reference_cases == 3
-        assert memory.journals["MISC"] == 3
-        assert memory.move_types["entry"] == 3
-
-    def test_memory_never_exposes_move_ids_or_checksums(self) -> None:
-        """Memory must not expose source_move_id or any checksums."""
-        reference = [_ref_row(i) for i in range(1, 3)]
-        memory = derive_company_memory(reference)
-
-        serialized = json.dumps(memory.to_dict())
-
-        # source_move_id should NOT appear (it's in reference, but memory excludes it)
-        assert "source_move_id" not in serialized
-        assert "checksum" not in serialized
-
-    def test_memory_account_names_from_history(self) -> None:
-        """Account catalog should contain actual GITC account names from history."""
-        reference = [_ref_row(i) for i in range(1, 3)]
-        memory = derive_company_memory(reference)
-
-        # Check account 510000 has recorded its name
-        assert "510000" in memory.account_catalog
-        assert "Expense Materials" in memory.account_catalog["510000"]["names"]
-
-        # Check account 211000
-        assert "211000" in memory.account_catalog
-        assert "Accounts Payable" in memory.account_catalog["211000"]["names"]
-
-    def test_memory_no_amounts_in_hints(self) -> None:
-        """Memory hints must never contain historical amounts."""
-        reference = [_ref_row(i) for i in range(1, 3)]
-        memory = derive_company_memory(reference)
-        hints = build_memory_hints(memory)
-
-        # Should not contain "100.00"
-        assert "100.00" not in hints
-        assert "100" not in hints or "cases" in hints  # "100" only OK if "X cases"
-
-    def test_memory_deterministic_on_order(self) -> None:
-        """Memory derivation must be deterministic (order-invariant catalogs)."""
-        ref_list = [_ref_row(i) for i in range(1, 4)]
-
-        mem1 = derive_company_memory(ref_list)
-        mem2 = derive_company_memory(list(reversed(ref_list)))
-
-        # Account catalog should match
-        assert mem1.account_catalog == mem2.account_catalog
+def _invalid_prediction() -> dict:
+    value = _prediction()
+    value["journal_entry"][0].pop("analytic_distribution")
+    return value
 
 
-class TestJournalMoveTypeMapping:
-    """Verify journal→move_type and move_type→journal conditional frequencies."""
-
-    def test_journal_to_move_type_conditional(self) -> None:
-        """Journal→move_type pairs must track conditional counts and confidence."""
-        # Create reference: 3x MISC/entry, 1x BILL/in_invoice
-        reference = [
-            _ref_row(1, journal="MISC", move_type="entry"),
-            _ref_row(2, journal="MISC", move_type="entry"),
-            _ref_row(3, journal="MISC", move_type="entry"),
-            _ref_row(4, journal="BILL", move_type="in_invoice"),
-        ]
-        memory = derive_company_memory(reference)
-
-        # Check pairs
-        assert memory.journal_move_type_pairs[("MISC", "entry")] == 3
-        assert memory.journal_move_type_pairs[("BILL", "in_invoice")] == 1
-
-    def test_move_type_to_journal_reverse_mapping(self) -> None:
-        """move_type→journal pairs must also track for reverse lookup."""
-        reference = [
-            _ref_row(1, journal="MISC", move_type="entry"),
-            _ref_row(2, journal="MISC", move_type="entry"),
-            _ref_row(3, journal="BILL", move_type="entry"),  # BILL also has entry
-        ]
-        memory = derive_company_memory(reference)
-
-        # Check reverse mapping
-        assert memory.move_type_journal_pairs[("entry", "MISC")] == 2
-        assert memory.move_type_journal_pairs[("entry", "BILL")] == 1
-
-
-class TestAccountDirectionPriors:
-    """Verify account debit/credit direction frequencies reflect historical usage."""
-
-    def test_account_debit_credit_counts(self) -> None:
-        """Account 510000 should always be debit; 211000 always credit."""
-        reference = [_ref_row(i) for i in range(1, 4)]
-        memory = derive_company_memory(reference)
-
-        acc_510 = memory.account_catalog["510000"]
-        assert acc_510["debit_count"] == 3
-        assert acc_510["credit_count"] == 0
-
-        acc_211 = memory.account_catalog["211000"]
-        assert acc_211["debit_count"] == 0
-        assert acc_211["credit_count"] == 3
-
-    def test_move_type_debit_credit_distribution(self) -> None:
-        """Move type debit/credit counts should track by type."""
-        reference = [_ref_row(i) for i in range(1, 3)]
-        memory = derive_company_memory(reference)
-
-        # "entry" move_type: 2x 510000 debit, 2x 211000 credit
-        assert memory.move_type_debit_count["entry"] == 2
-        assert memory.move_type_credit_count["entry"] == 2
-
-
-class TestDeepSeekFallback:
-    """Test json_schema → json_object fallback mechanism."""
-
-    def test_repair_adds_missing_debit_credit_defaults(self) -> None:
-        """Repair must add missing debit/credit as "0.00" (structural, not logic)."""
-        broken = {
-            "move_type": "entry",
-            "journal": {"name": "MISC"},
-            "partner": None,
-            "currency": {"name": "SAR"},
-            "taxes": [],
-            "journal_entry": [
-                {"account_code": "510000"},  # Missing debit, credit, tax_ids, analytic
+def _reference_row() -> dict:
+    return {
+        "contract_version": "1.0",
+        "reference_id": "move-1",
+        "source_move_id": 1,
+        "source": {
+            "attachments": [
                 {
-                    "account_code": "211000",
-                    "debit": "0.00",
-                    "credit": "100.00",
-                    "tax_ids": [],
-                    "analytic_distribution": {},
+                    "filename": "history.txt",
+                    "mimetype": "text/plain",
+                    "local_path": "attachments/history.txt",
+                    "content_status": "downloaded",
+                    "checksum": "must-not-enter-memory",
+                }
+            ]
+        },
+        "target": _prediction(),
+    }
+
+
+def _prepared_evaluation(tmp_path: Path) -> Path:
+    dataset = tmp_path / "golden-20260905T000000Z"
+    evaluation = dataset / "evaluation"
+    attachments = dataset / "attachments"
+    evaluation.mkdir(parents=True)
+    attachments.mkdir(parents=True)
+    (attachments / "current.txt").write_text(
+        "Supplier A materials VAT SAR 100.00",
+        encoding="utf-8",
+    )
+    (attachments / "history.txt").write_text(
+        "Supplier A materials VAT SAR historical document",
+        encoding="utf-8",
+    )
+
+    _write_json(
+        evaluation / "evaluation-manifest.json",
+        {
+            "ok": True,
+            "stage": "EVALUATION_DATA_READY",
+            "contract_version": "1.0",
+            "gates": {
+                "gold_only": True,
+                "single_company_scope": True,
+                "temporal_holdout": {"pass": True},
+                "exact_attachment_checksum_leakage_removed": True,
+                "model_input_target_leakage_blocked": True,
+                "source_content_coverage": {"pass": True},
+                "auto_post_disabled": True,
+                "human_review_required": True,
+            },
+        },
+    )
+    _write_jsonl(
+        evaluation / "evaluation-inputs.jsonl",
+        [
+            {
+                "contract_version": "1.0",
+                "case_id": "case-1",
+                "source": {
+                    "attachments": [
+                        {
+                            "filename": "current.txt",
+                            "mimetype": "text/plain",
+                            "local_path": "attachments/current.txt",
+                            "content_status": "downloaded",
+                        }
+                    ]
                 },
-            ],
-        }
-
-        repaired, repair_needed = _repair_schema_only(broken)
-
-        assert repair_needed is True
-        line0 = repaired["journal_entry"][0]
-        assert "debit" in line0 and line0["debit"] == "0.00"
-        assert "credit" in line0 and line0["credit"] == "0.00"
-        assert "tax_ids" in line0 and line0["tax_ids"] == []
-        assert "analytic_distribution" in line0 and line0["analytic_distribution"] == {}
-
-    def test_repair_converts_numeric_debit_credit_to_string(self) -> None:
-        """Repair must convert numeric debit/credit to ".2f" strings."""
-        broken = {
-            "move_type": "entry",
-            "journal": {"name": "MISC"},
-            "partner": None,
-            "currency": {"name": "SAR"},
-            "taxes": [],
-            "journal_entry": [
-                {
-                    "account_code": "510000",
-                    "debit": 123.456,  # Numeric
-                    "credit": 0,
-                    "tax_ids": [],
-                    "analytic_distribution": {},
-                },
-                {
-                    "account_code": "211000",
-                    "debit": "0.00",
-                    "credit": "123.46",
-                    "tax_ids": [],
-                    "analytic_distribution": {},
-                },
-            ],
-        }
-
-        repaired, repair_needed = _repair_schema_only(broken)
-
-        assert repair_needed is True
-        assert repaired["journal_entry"][0]["debit"] == "123.46"
-        assert isinstance(repaired["journal_entry"][0]["debit"], str)
-
-    def test_repair_idempotent_on_valid_schema(self) -> None:
-        """Repair should not modify already-valid schema."""
-        valid = {
-            "move_type": "entry",
-            "journal": {"name": "MISC"},
-            "partner": None,
-            "currency": {"name": "SAR"},
-            "taxes": [],
-            "journal_entry": [
-                {
-                    "account_code": "510000",
-                    "debit": "100.00",
-                    "credit": "0.00",
-                    "tax_ids": [],
-                    "analytic_distribution": {},
-                },
-                {
-                    "account_code": "211000",
-                    "debit": "0.00",
-                    "credit": "100.00",
-                    "tax_ids": [],
-                    "analytic_distribution": {},
-                },
-            ],
-        }
-
-        repaired, repair_needed = _repair_schema_only(valid)
-
-        assert repair_needed is False
-        assert repaired == valid
+            }
+        ],
+    )
+    _write_jsonl(
+        evaluation / "evaluation-reference.jsonl",
+        [_reference_row()],
+    )
+    _write_jsonl(
+        evaluation / "evaluation-ground-truth.jsonl",
+        [
+            {
+                "contract_version": "1.0",
+                "case_id": "case-1",
+                "target": _prediction(),
+            }
+        ],
+    )
+    return dataset
 
 
-class TestSchemaValidation:
-    """Test deterministic local schema validation."""
+class FakeLlm:
+    def __init__(self, prediction: dict | None = None) -> None:
+        self.prediction = prediction or _prediction()
+        self.calls: list[dict] = []
 
-    def test_valid_schema_passes(self) -> None:
-        """Valid prediction must pass local validation."""
-        valid = {
-            "move_type": "entry",
-            "journal": {"name": "MISC"},
-            "partner": None,
-            "currency": {"name": "SAR"},
-            "taxes": [],
-            "journal_entry": [
-                {
-                    "account_code": "510000",
-                    "debit": "100.00",
-                    "credit": "0.00",
-                    "tax_ids": [],
-                    "analytic_distribution": {},
-                },
-                {
-                    "account_code": "211000",
-                    "debit": "0.00",
-                    "credit": "100.00",
-                    "tax_ids": [],
-                    "analytic_distribution": {},
-                },
-            ],
-        }
-
-        assert _validate_schema_locally(valid) is True
-
-    def test_missing_required_field_fails(self) -> None:
-        """Missing top-level field must fail."""
-        invalid = {
-            "move_type": "entry",
-            "journal": {"name": "MISC"},
-            # Missing partner, currency, taxes, journal_entry
-        }
-
-        assert _validate_schema_locally(invalid) is False
-
-    def test_single_line_fails(self) -> None:
-        """Single line (need >= 2) must fail."""
-        invalid = {
-            "move_type": "entry",
-            "journal": {"name": "MISC"},
-            "partner": None,
-            "currency": {"name": "SAR"},
-            "taxes": [],
-            "journal_entry": [
-                {
-                    "account_code": "510000",
-                    "debit": "100.00",
-                    "credit": "0.00",
-                    "tax_ids": [],
-                    "analytic_distribution": {},
-                },
-            ],
-        }
-
-        assert _validate_schema_locally(invalid) is False
-
-    def test_missing_line_field_fails(self) -> None:
-        """Missing required line field must fail."""
-        invalid = {
-            "move_type": "entry",
-            "journal": {"name": "MISC"},
-            "partner": None,
-            "currency": {"name": "SAR"},
-            "taxes": [],
-            "journal_entry": [
-                {
-                    "account_code": "510000",
-                    # Missing debit, credit, tax_ids, analytic_distribution
-                },
-                {
-                    "account_code": "211000",
-                    "debit": "0.00",
-                    "credit": "100.00",
-                    "tax_ids": [],
-                    "analytic_distribution": {},
-                },
-            ],
-        }
-
-        assert _validate_schema_locally(invalid) is False
+    def complete_structured(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            parsed=self.prediction,
+            provider="fake",
+            model="fake-accountant",
+            usage=SimpleNamespace(
+                input_tokens=11,
+                output_tokens=22,
+                total_tokens=33,
+                cost_usd=0.01,
+            ),
+        )
 
 
-class TestTelemetryFailOpen:
-    """Test telemetry handles edge cases and missing usage info gracefully."""
-
-    def test_empty_telemetry_defaults(self) -> None:
-        """Empty telemetry must have sensible defaults."""
-        telem = GroundedEvaluationTelemetry()
-        report = telem.finalize()
-
-        assert report["total_cases"] == 0
-        assert report["success_rate"] == 0.0
-        assert report["cost_usd"] == 0.0
-        assert report["retrieval"]["avg_per_case"] == 0.0
-
-    def test_telemetry_accumulates_correctly(self) -> None:
-        """Telemetry must accumulate tokens, costs, and counts."""
-        telem = GroundedEvaluationTelemetry()
-
-        telem.record_case(success=True, tokens=100, cost=0.01, retrieval_count=5)
-        telem.record_case(success=True, tokens=120, cost=0.012, retrieval_count=4)
-        telem.record_case(success=False, tokens=50, cost=0.005, retrieval_count=3)
-
-        report = telem.finalize()
-
-        assert report["total_cases"] == 3
-        assert report["successful_cases"] == 2
-        assert report["tokens"]["total"] == 270
-        assert report["cost_usd"] == pytest.approx(0.027, abs=0.001)
-        assert report["retrieval"]["total_retrieved"] == 12
-
-    def test_telemetry_tracks_fallback_and_repair(self) -> None:
-        """Telemetry must track fallback and repair separately."""
-        telem = GroundedEvaluationTelemetry()
-
-        telem.record_case(success=True, fallback=True, repair=False, tokens=100)
-        telem.record_case(success=True, fallback=False, repair=True, tokens=100)
-        telem.record_case(success=False, fallback=False, repair=False, error=True)
-
-        report = telem.finalize()
-
-        assert report["fallback_cases"] == 1
-        assert report["repair_cases"] == 1
-        assert report["error_cases"] == 1
+class BadRequestError(Exception):
+    pass
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+class JsonSchemaRejectingLlm(FakeLlm):
+    def complete_structured(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs.get("json_schema") is not None:
+            raise BadRequestError(
+                "response_format type json_schema is unsupported; use json_object"
+            )
+        return SimpleNamespace(
+            parsed=self.prediction,
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            usage=SimpleNamespace(
+                input_tokens=13,
+                output_tokens=17,
+                total_tokens=30,
+                cost_usd=0.02,
+            ),
+        )
+
+
+class RepairingLlm(FakeLlm):
+    def complete_structured(self, **kwargs):
+        self.calls.append(kwargs)
+        value = (
+            _prediction()
+            if kwargs.get("purpose") == "accounting_baseline_schema_repair"
+            else _invalid_prediction()
+        )
+        return SimpleNamespace(
+            parsed=value,
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=20,
+                total_tokens=30,
+                cost_usd=0.01,
+            ),
+        )
+
+
+class CapturingDraftLlm:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def complete_structured(self, **kwargs):
+        self.calls.append(kwargs)
+        prediction = _prediction()
+        prediction.update(
+            {
+                "date": "2026-09-10",
+                "reference": "INV-1",
+                "company": {"id": 1, "name": "GITC"},
+            }
+        )
+        return SimpleNamespace(
+            parsed=prediction,
+            provider="fake",
+            model="fake-accountant",
+        )
+
+
+def test_company_memory_preserves_exact_odoo_ids_and_no_amounts() -> None:
+    memory = derive_company_memory([_reference_row()])
+    hints = build_memory_hints(memory)
+
+    assert "id=7" in hints
+    assert "id=1" in hints
+    assert "id=14" in hints
+    assert "code=510000 id=501" in hints
+    assert "debit-prior=1.00" in hints
+    assert "credit-prior=1.00" in hints
+    assert "100.00" not in hints
+    assert "must-not-enter-memory" not in hints
+    assert "source_move_id" not in json.dumps(memory.to_dict())
+
+
+def test_company_memory_tracks_journal_move_type_and_analytics() -> None:
+    memory = derive_company_memory([_reference_row()])
+
+    assert memory.journal_move_type_pairs[("id:7", "entry")] == 1
+    assert memory.move_type_journal_pairs[("entry", "id:7")] == 1
+    assert memory.account_debit_count["510000"] == 1
+    assert memory.account_credit_count["211000"] == 1
+    assert memory.analytic_patterns['{"11":100}'] == 1
+
+
+def test_company_memory_roundtrip_is_json_safe() -> None:
+    memory = derive_company_memory([_reference_row()])
+    payload = json.loads(json.dumps(memory.to_dict()))
+    restored = CompanyMemory.from_dict(payload)
+
+    assert restored.journal_move_type_pairs == memory.journal_move_type_pairs
+    assert restored.account_catalog == memory.account_catalog
+    assert restored.currency_catalog == memory.currency_catalog
+
+
+def test_grounded_runner_routes_fixed_predictions_through_trusted_production_gate(
+    tmp_path: Path,
+) -> None:
+    dataset = _prepared_evaluation(tmp_path)
+    result = run_grounded_evaluation(tmp_path, FakeLlm())
+
+    assert result["stage"] == result["score_report"]["stage"]
+    assert result["production_gate"] == result["score_report"]["production_gate"]
+    assert result["score_report"]["evaluation_cases"] == 1
+    assert result["safety"]["predictions_fixed_before_scoring"] is True
+    assert (dataset / "evaluation" / "evaluation-predictions.jsonl").is_file()
+    assert not (dataset / "evaluation" / "evaluation-grounded-predictions.jsonl").exists()
+
+
+def test_grounded_inference_loader_never_reads_ground_truth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prepared_evaluation(tmp_path)
+    original = grounded_runner._load_jsonl
+
+    def guarded(path: Path):
+        assert path.name != "evaluation-ground-truth.jsonl"
+        return original(path)
+
+    monkeypatch.setattr(grounded_runner, "_load_jsonl", guarded)
+    result = run_grounded_evaluation(tmp_path, FakeLlm())
+
+    assert result["score_report"]["evaluation_cases"] == 1
+
+
+def test_grounded_runner_includes_memory_and_retrieval_without_current_truth(
+    tmp_path: Path,
+) -> None:
+    _prepared_evaluation(tmp_path)
+    llm = FakeLlm()
+
+    run_grounded_evaluation(tmp_path, llm, top_k=1)
+
+    serialized = json.dumps(llm.calls[0], default=str)
+    assert "GITC ACCOUNTING MEMORY" in serialized
+    assert "RETRIEVED EARLIER GOLD EXAMPLES" in serialized
+    assert "id=7" in serialized
+    assert "evaluation-ground-truth" not in serialized
+
+
+def test_grounded_runner_uses_exact_deepseek_json_fallback(tmp_path: Path) -> None:
+    _prepared_evaluation(tmp_path)
+    llm = JsonSchemaRejectingLlm()
+
+    result = run_grounded_evaluation(tmp_path, llm)
+
+    assert result["json_schema_fallbacks"] == 1
+    assert len(llm.calls) == 2
+    assert llm.calls[0]["json_schema"] is not None
+    assert llm.calls[1]["json_schema"] is None
+    assert "JSON schema" in llm.calls[1]["instructions"]
+    assert result["usage"] == {
+        "input_tokens": 13,
+        "output_tokens": 17,
+        "total_tokens": 30,
+        "cost_usd": 0.02,
+    }
+
+
+def test_grounded_runner_uses_one_llm_schema_repair_without_inventing_defaults(
+    tmp_path: Path,
+) -> None:
+    _prepared_evaluation(tmp_path)
+    llm = RepairingLlm()
+
+    result = run_grounded_evaluation(tmp_path, llm)
+
+    assert result["repairs_attempted"] == 1
+    assert len(llm.calls) == 2
+    assert llm.calls[1]["purpose"] == "accounting_baseline_schema_repair"
+    assert "Preserve every accounting fact and amount" in llm.calls[1]["instructions"]
+    assert result["usage"]["input_tokens"] == 20
+    assert result["usage"]["output_tokens"] == 40
+    assert result["usage"]["total_tokens"] == 60
+
+
+def test_grounded_progress_callback_is_fail_open(tmp_path: Path) -> None:
+    _prepared_evaluation(tmp_path)
+
+    def broken_callback(_: dict) -> None:
+        raise RuntimeError("telemetry sink unavailable")
+
+    result = run_grounded_evaluation(
+        tmp_path,
+        FakeLlm(),
+        progress_callback=broken_callback,
+    )
+
+    assert result["cases"] == 1
+    assert result["score_report"]["evaluation_cases"] == 1
+
+
+def test_production_draft_uses_same_gitc_memory_and_remains_review_only(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    dataset = home / "accounting_brain" / "datasets" / "golden-1"
+    attachments = dataset / "attachments"
+    attachments.mkdir(parents=True)
+    (attachments / "history.txt").write_text(
+        "Supplier A materials VAT SAR",
+        encoding="utf-8",
+    )
+    source = home / "inbox" / "new.txt"
+    source.parent.mkdir(parents=True)
+    source.write_text("Supplier A materials VAT SAR 100.00", encoding="utf-8")
+
+    pair = _reference_row()
+    pair["grade"] = "gold"
+    pair["input"] = {
+        "document": {"date": "2026-01-01"},
+        "attachments": pair["source"]["attachments"],
+    }
+    _write_jsonl(dataset / "pairs.jsonl", [pair])
+    llm = CapturingDraftLlm()
+
+    result = prepare_accounting_draft(
+        source,
+        hermes_home=home,
+        datasets_root=home / "accounting_brain" / "datasets",
+        output_root=home / "accounting_brain" / "drafts",
+        llm=llm,
+        top_k=1,
+    )
+
+    serialized = json.dumps(llm.calls[0], default=str)
+    assert "GITC ACCOUNTING MEMORY" in serialized
+    assert "id=7" in serialized
+    assert result["production_mode"] == "draft_only"
+    assert result["safety"]["odoo_write_performed"] is False
+    assert result["safety"]["auto_post"] is False
+    assert result["safety"]["human_review_required"] is True
+    assert result["safety"]["company_memory_from_validated_gold_only"] is True

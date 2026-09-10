@@ -4,6 +4,10 @@ The CLI is intentionally read-only against Odoo. It produces private local
 reports/datasets that can later feed document extraction, retrieval, and model
 training pipelines. Historical audit/export operations are fail-closed to one
 Odoo company through the same company-scope use case used by the dashboard.
+
+Model-evaluation operations preserve the same boundary: preparation may read
+source evidence from Odoo, while deterministic scoring operates only on private
+local evaluation artifacts and never needs Odoo credentials.
 """
 
 from __future__ import annotations
@@ -24,6 +28,11 @@ from plugins.accounting_brain.journal_training.filesystem_dataset import (
 from plugins.accounting_brain.journal_training.historical_journals import (
     JournalSelection,
     load_historical_journal_batch,
+)
+from plugins.accounting_brain.model_evaluation.operator import (
+    EvaluationOperatorError,
+    prepare_operator_evaluation,
+    score_prediction_file,
 )
 from plugins.accounting_brain.odoo_discovery.company_scope import (
     OdooCompany,
@@ -97,16 +106,83 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         help="Skip individual attachments larger than this many MiB",
     )
 
+    evaluation = subs.add_parser(
+        "evaluation",
+        help="Prepare leakage-safe holdouts and deterministically score model predictions",
+    )
+    evaluation_subs = evaluation.add_subparsers(dest="accounting_evaluation_action")
+
+    evaluation_prepare = evaluation_subs.add_parser(
+        "prepare",
+        help="Prepare the newest private Gold dataset for baseline evaluation",
+    )
+    evaluation_prepare.add_argument(
+        "--hydrate-source-content",
+        action="store_true",
+        help="Read supported attachment bytes from Odoo into private dataset storage",
+    )
+    evaluation_prepare.add_argument(
+        "--max-attachment-mb",
+        type=int,
+        default=25,
+        help="Skip individual source attachments larger than this many MiB",
+    )
+    evaluation_prepare.add_argument(
+        "--holdout-fraction",
+        type=float,
+        default=0.20,
+        help="Newest chronological fraction reserved for evaluation",
+    )
+    evaluation_prepare.add_argument(
+        "--min-holdout",
+        type=int,
+        default=100,
+        help="Minimum number of leakage-safe evaluation cases required",
+    )
+    evaluation_prepare.add_argument(
+        "--min-source-content-coverage",
+        type=float,
+        default=0.90,
+        help="Minimum holdout fraction with downloaded source evidence",
+    )
+
+    evaluation_score = evaluation_subs.add_parser(
+        "score",
+        help="Score a complete predictions JSONL file with deterministic accounting invariants",
+    )
+    evaluation_score.add_argument(
+        "--predictions",
+        required=True,
+        help=(
+            "JSONL containing one object per holdout case: "
+            "{case_id, prediction}. This command does not send data to a model."
+        ),
+    )
+    evaluation_score.add_argument(
+        "--output",
+        default="",
+        help="Optional score-report path; defaults inside the private evaluation directory",
+    )
+
     parser.set_defaults(func=accounting_command)
 
 
 def accounting_command(args: argparse.Namespace) -> int:
     action = getattr(args, "accounting_action", None)
     if not action:
-        print("Usage: hermes accounting {status|discover|audit|export}")
+        print("Usage: hermes accounting {status|discover|audit|export|evaluation}")
         return 2
 
     try:
+        if action == "evaluation":
+            evaluation_action = getattr(args, "accounting_evaluation_action", None)
+            if evaluation_action == "score":
+                return _cmd_evaluation_score(args)
+            if evaluation_action == "prepare":
+                return _cmd_evaluation_prepare(_reader_from_environment(), args)
+            print("Usage: hermes accounting evaluation {prepare|score}")
+            return 2
+
         reader = _reader_from_environment()
         if action == "status":
             return _cmd_status(reader)
@@ -118,7 +194,12 @@ def accounting_command(args: argparse.Namespace) -> int:
             return _cmd_export(reader, args)
         print(f"Unknown accounting action: {action}")
         return 2
-    except (OdooConfigurationError, OdooReadError, OdooCompanyScopeError) as exc:
+    except (
+        EvaluationOperatorError,
+        OdooConfigurationError,
+        OdooReadError,
+        OdooCompanyScopeError,
+    ) as exc:
         print(f"Accounting Brain: {exc}")
         return 1
 
@@ -147,8 +228,16 @@ def _cmd_status(reader: OdooXmlRpcReadAdapter) -> int:
 
 
 def _cmd_discover(reader: OdooXmlRpcReadAdapter, args: argparse.Namespace) -> int:
-    only = [str(item).strip() for item in (getattr(args, "only_model", []) or []) if str(item).strip()]
-    extra = [str(item).strip() for item in (getattr(args, "model", []) or []) if str(item).strip()]
+    only = [
+        str(item).strip()
+        for item in (getattr(args, "only_model", []) or [])
+        if str(item).strip()
+    ]
+    extra = [
+        str(item).strip()
+        for item in (getattr(args, "model", []) or [])
+        if str(item).strip()
+    ]
     models = only if only else list(CORE_ACCOUNTING_MODELS) + extra
     report = discover_odoo_schema(reader, models=models).to_dict()
     output = _output_path(
@@ -241,6 +330,58 @@ def _cmd_export(reader: OdooXmlRpcReadAdapter, args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_evaluation_prepare(
+    reader: OdooXmlRpcReadAdapter,
+    args: argparse.Namespace,
+) -> int:
+    holdout_fraction = float(getattr(args, "holdout_fraction", 0.20) or 0.20)
+    source_coverage = float(
+        getattr(args, "min_source_content_coverage", 0.90) or 0.90
+    )
+    if not 0.0 < holdout_fraction < 1.0:
+        raise EvaluationOperatorError("--holdout-fraction must be between 0 and 1")
+    if not 0.0 <= source_coverage <= 1.0:
+        raise EvaluationOperatorError(
+            "--min-source-content-coverage must be between 0 and 1"
+        )
+    max_mb = max(1, int(getattr(args, "max_attachment_mb", 25) or 25))
+    report = prepare_operator_evaluation(
+        reader,
+        _datasets_root(),
+        hydrate_source_content=bool(
+            getattr(args, "hydrate_source_content", False)
+        ),
+        max_attachment_bytes=max_mb * 1024 * 1024,
+        holdout_fraction=holdout_fraction,
+        min_holdout=max(1, int(getattr(args, "min_holdout", 100) or 100)),
+        min_source_content_coverage=source_coverage,
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if bool(report.get("ok")) else 1
+
+
+def _cmd_evaluation_score(args: argparse.Namespace) -> int:
+    predictions = Path(str(getattr(args, "predictions", "") or "")).expanduser()
+    output_raw = str(getattr(args, "output", "") or "").strip()
+    report = score_prediction_file(
+        _datasets_root(),
+        predictions,
+        output_path=Path(output_raw).expanduser() if output_raw else None,
+    )
+    summary = {
+        "ok": report["ok"],
+        "stage": report["stage"],
+        "next_action": report["next_action"],
+        "dataset": report["dataset"],
+        "coverage": report["coverage"],
+        "metrics": report["metrics"],
+        "artifact": report["artifact"],
+        "safety": report["safety"],
+    }
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
 def _add_history_selection_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-moves", type=int, default=1000)
     parser.add_argument("--date-from", default="", help="YYYY-MM-DD")
@@ -270,16 +411,15 @@ def _scoped_selection(
     return replace(selection, company_id=selected_company.id), selected_company
 
 
+def _datasets_root() -> Path:
+    return (get_hermes_home() / "accounting_brain" / "datasets").resolve()
+
+
 def _output_path(raw: str, *, category: str, filename: str) -> Path:
     value = str(raw or "").strip()
     if value:
         return Path(value).expanduser().resolve()
-    return (
-        get_hermes_home()
-        / "accounting_brain"
-        / category
-        / filename
-    ).resolve()
+    return (get_hermes_home() / "accounting_brain" / category / filename).resolve()
 
 
 def _write_private_json(path: Path, payload: dict) -> None:

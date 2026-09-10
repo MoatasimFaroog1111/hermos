@@ -165,6 +165,7 @@ def run_grounded_evaluation(
                 reference_rows,
                 dataset_root=dataset_root,
                 top_k=max(1, min(10, int(top_k))),
+                include_amounts=False,
             )
         except (SourceMaterialError, RetrievalError) as exc:
             raise GroundedEvaluationError(
@@ -181,7 +182,7 @@ def run_grounded_evaluation(
                 "type": "text",
                 "text": (
                     "RETRIEVED EARLIER GOLD EXAMPLES "
-                    "(not current holdout ground truth):\n"
+                    "(not current holdout ground truth; historical amounts withheld):\n"
                     + json.dumps(examples, ensure_ascii=False, sort_keys=True)
                 ),
             },
@@ -368,6 +369,7 @@ def run_grounded_evaluation(
             "holdout_ground_truth_visible_to_model": False,
             "reference_pool_is_non_holdout_history": True,
             "company_memory_is_non_holdout_history": True,
+            "historical_amounts_visible_to_model": False,
             "predictions_fixed_before_scoring": True,
             "odoo_mutations": False,
             "auto_post": False,

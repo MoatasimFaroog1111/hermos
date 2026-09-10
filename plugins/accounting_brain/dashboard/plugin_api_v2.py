@@ -1,9 +1,9 @@
-"""Accounting Brain dashboard API with safe background baseline evaluation.
+"""Accounting Brain dashboard API with safe background model evaluation.
 
 This module extends the existing read-only Accounting Brain dashboard router.
-Baseline evaluation consumes only the prepared source-only holdout through the
-existing model-evaluation use case. It never mutates Odoo, trains a model, or
-auto-posts accounting entries.
+Baseline and grounded evaluation consume only prepared private evaluation data
+through the existing model-evaluation use cases. Neither path mutates Odoo,
+trains a model, or auto-posts accounting entries.
 """
 
 from __future__ import annotations
@@ -25,6 +25,10 @@ from plugins.accounting_brain.model_evaluation.baseline_runner import (
     build_host_llm,
     run_baseline_evaluation,
 )
+from plugins.accounting_brain.model_evaluation.grounded_runner import (
+    GroundedEvaluationError,
+    run_grounded_evaluation,
+)
 
 
 class BaselineEvaluationRequest(BaseModel):
@@ -34,9 +38,28 @@ class BaselineEvaluationRequest(BaseModel):
     max_tokens: int = Field(default=1800, ge=256, le=4096)
 
 
+class GroundedEvaluationRequest(BaseModel):
+    """Bounded settings for one GITC-memory grounded holdout run."""
+
+    top_k: int = Field(default=5, ge=1, le=10)
+    timeout_seconds: float = Field(default=120.0, ge=15.0, le=300.0)
+    max_tokens: int = Field(default=1800, ge=256, le=4096)
+
+
 _BASELINE_LOCK = asyncio.Lock()
 _BASELINE_TASK: asyncio.Task[None] | None = None
 _BASELINE_STATE: dict[str, Any] = {
+    "status": "idle",
+    "started_at": None,
+    "finished_at": None,
+    "result": None,
+    "error": None,
+    "progress": None,
+}
+
+_GROUNDED_LOCK = asyncio.Lock()
+_GROUNDED_TASK: asyncio.Task[None] | None = None
+_GROUNDED_STATE: dict[str, Any] = {
     "status": "idle",
     "started_at": None,
     "finished_at": None,
@@ -60,26 +83,7 @@ async def start_baseline_evaluation(
                 detail="A baseline model evaluation is already running",
             )
 
-        _BASELINE_STATE.update(
-            {
-                "status": "running",
-                "started_at": _timestamp(),
-                "finished_at": None,
-                "result": None,
-                "error": None,
-                "progress": {
-                    "phase": "starting",
-                    "total_cases": None,
-                    "completed_cases": 0,
-                    "current_case": None,
-                    "repairs_attempted": 0,
-                    "elapsed_seconds": 0.0,
-                    "last_case_duration_seconds": None,
-                    "last_model_call_duration_seconds": None,
-                    "updated_at": _timestamp(),
-                },
-            }
-        )
+        _BASELINE_STATE.update(_new_running_state())
         _BASELINE_TASK = asyncio.create_task(_run_baseline_background(request))
         return _public_state()
 
@@ -103,6 +107,44 @@ async def baseline_evaluation_status() -> dict[str, Any]:
     return _public_state()
 
 
+@router.post("/evaluation/grounded")
+async def start_grounded_evaluation(
+    request: GroundedEvaluationRequest,
+) -> dict[str, Any]:
+    """Start one grounded 104-case run without holding the HTTP request open."""
+
+    global _GROUNDED_TASK
+    async with _GROUNDED_LOCK:
+        if _GROUNDED_TASK is not None and not _GROUNDED_TASK.done():
+            raise HTTPException(
+                status_code=409,
+                detail="A grounded model evaluation is already running",
+            )
+
+        _GROUNDED_STATE.update(_new_running_state())
+        _GROUNDED_TASK = asyncio.create_task(_run_grounded_background(request))
+        return _grounded_public_state()
+
+
+@router.get("/evaluation/grounded")
+async def grounded_evaluation_status() -> dict[str, Any]:
+    """Return the active grounded run or newest persisted grounded report."""
+
+    if _GROUNDED_STATE["status"] == "idle":
+        persisted = _load_latest_grounded_report()
+        if persisted is not None:
+            return {
+                "status": "completed" if persisted.get("error") is None else "failed",
+                "started_at": persisted.get("started_at"),
+                "finished_at": persisted.get("finished_at"),
+                "result": persisted.get("result"),
+                "error": persisted.get("error"),
+                "progress": persisted.get("progress"),
+                "safety": _grounded_safety_summary(),
+            }
+    return _grounded_public_state()
+
+
 async def _run_baseline_background(request: BaselineEvaluationRequest) -> None:
     try:
         result = await asyncio.to_thread(_run_baseline_sync, request)
@@ -120,6 +162,25 @@ async def _run_baseline_background(request: BaselineEvaluationRequest) -> None:
             }
         )
         _persist_state()
+
+
+async def _run_grounded_background(request: GroundedEvaluationRequest) -> None:
+    try:
+        result = await asyncio.to_thread(_run_grounded_sync, request)
+    except GroundedEvaluationError as exc:
+        _finish_grounded_failed(str(exc))
+    except Exception as exc:  # fail closed; do not expose traceback or secrets
+        _finish_grounded_failed(f"Grounded evaluation failed: {type(exc).__name__}")
+    else:
+        _GROUNDED_STATE.update(
+            {
+                "status": "completed",
+                "finished_at": _timestamp(),
+                "result": result,
+                "error": None,
+            }
+        )
+        _persist_grounded_state()
 
 
 def _run_baseline_sync(request: BaselineEvaluationRequest) -> dict[str, Any]:
@@ -140,12 +201,61 @@ def _run_baseline_sync(request: BaselineEvaluationRequest) -> dict[str, Any]:
     return report
 
 
+def _run_grounded_sync(request: GroundedEvaluationRequest) -> dict[str, Any]:
+    datasets_root = get_hermes_home() / "accounting_brain" / "datasets"
+    report = run_grounded_evaluation(
+        datasets_root,
+        build_host_llm(),
+        top_k=request.top_k,
+        timeout_seconds=request.timeout_seconds,
+        max_tokens=request.max_tokens,
+        progress_callback=_record_grounded_progress,
+    )
+    report["dashboard_execution"] = {
+        "background_task": True,
+        "training_performed": False,
+        "odoo_mutations": False,
+        "auto_post": False,
+        "official_production_gate": True,
+    }
+    return report
+
+
+def _new_running_state() -> dict[str, Any]:
+    return {
+        "status": "running",
+        "started_at": _timestamp(),
+        "finished_at": None,
+        "result": None,
+        "error": None,
+        "progress": {
+            "phase": "starting",
+            "total_cases": None,
+            "completed_cases": 0,
+            "current_case": None,
+            "repairs_attempted": 0,
+            "elapsed_seconds": 0.0,
+            "last_case_duration_seconds": None,
+            "last_model_call_duration_seconds": None,
+            "updated_at": _timestamp(),
+        },
+    }
+
+
 def _record_progress(progress: dict[str, Any]) -> None:
-    """Record observational telemetry without changing evaluation behavior."""
+    """Record baseline telemetry without changing evaluation behavior."""
 
     snapshot = dict(progress)
     snapshot["updated_at"] = _timestamp()
     _BASELINE_STATE["progress"] = snapshot
+
+
+def _record_grounded_progress(progress: dict[str, Any]) -> None:
+    """Record grounded telemetry without changing evaluation behavior."""
+
+    snapshot = dict(progress)
+    snapshot["updated_at"] = _timestamp()
+    _GROUNDED_STATE["progress"] = snapshot
 
 
 def _finish_failed(message: str) -> None:
@@ -160,6 +270,18 @@ def _finish_failed(message: str) -> None:
     _persist_state()
 
 
+def _finish_grounded_failed(message: str) -> None:
+    _GROUNDED_STATE.update(
+        {
+            "status": "failed",
+            "finished_at": _timestamp(),
+            "result": None,
+            "error": message,
+        }
+    )
+    _persist_grounded_state()
+
+
 def _public_state() -> dict[str, Any]:
     return {
         **_BASELINE_STATE,
@@ -167,9 +289,28 @@ def _public_state() -> dict[str, Any]:
     }
 
 
+def _grounded_public_state() -> dict[str, Any]:
+    return {
+        **_GROUNDED_STATE,
+        "safety": _grounded_safety_summary(),
+    }
+
+
 def _safety_summary() -> dict[str, bool]:
     return {
         "ground_truth_visible_to_model": False,
+        "odoo_mutations": False,
+        "training_performed": False,
+        "auto_post": False,
+        "human_review_required": True,
+    }
+
+
+def _grounded_safety_summary() -> dict[str, bool]:
+    return {
+        "ground_truth_visible_to_model": False,
+        "historical_amounts_visible_to_model": False,
+        "reference_pool_is_non_holdout_history": True,
         "odoo_mutations": False,
         "training_performed": False,
         "auto_post": False,
@@ -189,9 +330,24 @@ def _reports_root() -> Path:
 
 def _persist_state() -> Path:
     path = _reports_root() / f"baseline-model-evaluation-{_timestamp()}.json"
+    _write_state_file(path, _public_state())
+    if isinstance(_BASELINE_STATE.get("result"), dict):
+        _BASELINE_STATE["result"]["report_file"] = path.name
+    return path
+
+
+def _persist_grounded_state() -> Path:
+    path = _reports_root() / f"grounded-model-evaluation-{_timestamp()}.json"
+    _write_state_file(path, _grounded_public_state())
+    if isinstance(_GROUNDED_STATE.get("result"), dict):
+        _GROUNDED_STATE["result"]["report_file"] = path.name
+    return path
+
+
+def _write_state_file(path: Path, payload: dict[str, Any]) -> None:
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.write_text(
-        json.dumps(_public_state(), ensure_ascii=False, indent=2, sort_keys=True),
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     try:
@@ -203,16 +359,21 @@ def _persist_state() -> Path:
         os.chmod(path, 0o600)
     except OSError:
         pass
-    if isinstance(_BASELINE_STATE.get("result"), dict):
-        _BASELINE_STATE["result"]["report_file"] = path.name
-    return path
 
 
 def _load_latest_report() -> dict[str, Any] | None:
+    return _load_latest_named_report("baseline-model-evaluation-*.json")
+
+
+def _load_latest_grounded_report() -> dict[str, Any] | None:
+    return _load_latest_named_report("grounded-model-evaluation-*.json")
+
+
+def _load_latest_named_report(pattern: str) -> dict[str, Any] | None:
     root = get_hermes_home() / "accounting_brain" / "reports"
     if not root.exists():
         return None
-    candidates = sorted(root.glob("baseline-model-evaluation-*.json"))
+    candidates = sorted(root.glob(pattern))
     if not candidates:
         return None
     try:

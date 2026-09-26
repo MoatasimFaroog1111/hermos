@@ -1,0 +1,46 @@
+# =============================================================================
+#  Coolify variant of the Hermes (brilliant-expression) Railway service.
+#
+#  Railway ran the dashboard as the primary process via
+#  docker/railway-start.sh, which execs:
+#      /init main-wrapper.sh dashboard --host 0.0.0.0 --port 9119 --no-open
+#  and leaves HERMES_DASHBOARD unset so the s6-supervised dashboard slot stays
+#  down (avoiding a port clash). We replicate that exactly below.
+#
+#  Coolify runs its own reverse proxy (Traefik) on host ports 80/443, so no
+#  host port is published. Coolify routes the configured domain to `app:9119`
+#  (see `expose`). All secrets are injected from Coolify's environment via
+#  `env_file: .env`.
+# =============================================================================
+
+name: hermes
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    expose:
+      - "9119"
+    command:
+      - dashboard
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "9119"
+      - --no-open
+    env_file: .env
+    environment:
+      PORT: "9119"
+      HERMES_DASHBOARD_HOST: "0.0.0.0"
+      HERMES_DASHBOARD_PORT: "9119"
+      HERMES_REQUIRED_BUNDLED_DASHBOARD_PLUGINS: "hermes-avatar,accounting_brain"
+    volumes:
+      - data:/opt/data
+    networks: [app]
+
+volumes:
+  data:
+
+networks:
+  app:
+    driver: bridge

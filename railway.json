@@ -5,7 +5,7 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "/bin/sh /opt/hermes/docker/railway-start.sh",
+    "startCommand": "/init /opt/hermes/docker/main-wrapper.sh gateway run",
     "healthcheckPath": "/api/status",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",

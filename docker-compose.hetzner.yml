@@ -1,0 +1,30 @@
+name: hermes
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["gateway", "run"]
+    env_file:
+      - .env
+    environment:
+      PORT: "9119"
+      HERMES_DASHBOARD: "1"
+      HERMES_DASHBOARD_HOST: "0.0.0.0"
+      HERMES_DASHBOARD_PORT: "9119"
+      HERMES_REQUIRED_BUNDLED_DASHBOARD_PLUGINS: "hermes-avatar,accounting_brain"
+    ports:
+      - "9119:9119"
+    volumes:
+      - hermes_data:/opt/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9119/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  hermes_data:

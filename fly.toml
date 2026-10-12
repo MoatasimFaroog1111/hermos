@@ -7,12 +7,19 @@ primary_region = "sin"
 [build]
   dockerfile = "Dockerfile"
 
+# Fly Machines keep their own init as PID 1, so s6-overlay's /init (the image
+# ENTRYPOINT) refuses to start there.  docker/fly-start.sh runs the same
+# bootstrap and then supervises the dashboard + gateway itself.
+[experimental]
+  entrypoint = ["/bin/sh", "/opt/hermes/docker/fly-start.sh"]
+
 [env]
   PORT = "9119"
   HERMES_DASHBOARD = "1"
   HERMES_DASHBOARD_HOST = "0.0.0.0"
   HERMES_DASHBOARD_PORT = "9119"
   HERMES_REQUIRED_BUNDLED_DASHBOARD_PLUGINS = "hermes-avatar,accounting_brain"
+  HERMES_GATEWAY_NO_SUPERVISE = "1"
 
 [[mounts]]
   source = "hermes_data"
@@ -29,7 +36,7 @@ primary_region = "sin"
   [[http_service.checks]]
     interval = "30s"
     timeout = "10s"
-    grace_period = "60s"
+    grace_period = "120s"
     method = "GET"
     path = "/api/status"
 

@@ -14,7 +14,7 @@
 # Wired in via `[experimental] entrypoint` in fly.toml.  When the script
 # does own PID 1 (plain `docker run`), it defers to /init so Docker keeps
 # the full s6 behaviour.  Mirrors docker/railway-start.sh for the env setup.
-set -u
+set +u
 
 export HERMES_DASHBOARD=1
 export HERMES_DASHBOARD_HOST="${HERMES_DASHBOARD_HOST:-0.0.0.0}"

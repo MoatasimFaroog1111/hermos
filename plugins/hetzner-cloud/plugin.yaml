@@ -1,0 +1,28 @@
+name: hetzner-cloud
+version: "1.0.0"
+description: "Least-privilege Hetzner Cloud control for KTA99: read/monitor freely, require human approval for reversible server/firewall mutations, and hard-block destructive actions."
+author: "Guardian / Athmar"
+requires_env:
+  - name: HETZNER_API_TOKEN
+    description: "Hetzner Cloud project API token. Store only in the active Hermes profile."
+    url: "https://console.hetzner.cloud/"
+    secret: true
+provides_tools:
+  - hetzner_list_servers
+  - hetzner_get_server
+  - hetzner_get_server_metrics
+  - hetzner_list_firewalls
+  - hetzner_get_firewall
+  - hetzner_list_networks
+  - hetzner_list_actions
+  - hetzner_get_action
+  - hetzner_get_pricing
+  - hetzner_server_reboot
+  - hetzner_server_power_on
+  - hetzner_server_power_off
+  - hetzner_server_shutdown
+  - hetzner_firewall_set_rules
+  - hetzner_firewall_apply_to_server
+  - hetzner_firewall_remove_from_server
+provides_hooks:
+  - pre_tool_call

@@ -2,9 +2,11 @@ import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
+pytest.importorskip("pandas", reason="optional platinum research dependencies")
 import numpy as np
 import pandas as pd
-import pytest
 
 from platinum_forecasting.forecast_service import ForecastService, DataSnapshot
 

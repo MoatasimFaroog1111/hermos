@@ -1,0 +1,140 @@
+{
+  "status": "evaluated_once",
+  "selection_sha256": "aa6fe6ff77594f198d03a881ac7a95e34e5b9ded597219b9a63b25a53ba9d253",
+  "config": {
+    "frequency": "hourly",
+    "horizon": 4,
+    "trials": 8,
+    "seed": 20261019,
+    "holdout_fraction": 0.2,
+    "minimum_samples": 500
+  },
+  "champion": "ridge_return",
+  "baseline": "baseline_naive",
+  "holdout": {
+    "n": 702,
+    "mae": 14.178891178843118,
+    "rmse": 19.741039380723887,
+    "bias": 2.764709483536806,
+    "smape": 0.8176289173866891,
+    "directional_accuracy": 0.48717948717948717,
+    "balanced_accuracy": 0.3403267989932033,
+    "positive_precision": 0.4726027397260274,
+    "positive_recall": 0.8440366972477065,
+    "return_mae": 0.008170366964025155,
+    "relative_mae": 1.0082740254792433,
+    "interval_coverage": 0.9501424501424501,
+    "mean_interval_width": 85.73718598655002
+  },
+  "baseline_holdout": {
+    "n": 702,
+    "mae": 14.06253738620683,
+    "rmse": 19.61927751020677,
+    "bias": 1.6423094659788846,
+    "smape": 0.8113598363692928,
+    "directional_accuracy": 0.002849002849002849,
+    "balanced_accuracy": 0.3333333333333333,
+    "positive_precision": 0.0,
+    "positive_recall": 0.0,
+    "return_mae": 0.00810760392704946
+  },
+  "fold_ratios": [
+    0.9979599603431671,
+    1.014191528400845,
+    1.0009562567081614
+  ],
+  "bootstrap": {
+    "mean": -0.11635379263628774,
+    "lower": -0.3165160062716895,
+    "upper": 0.07344116756331182,
+    "block_length": 9,
+    "draws": 2000,
+    "method": "moving-block percentile bootstrap, one-sided alpha=.05/5"
+  },
+  "decision": {
+    "checks": {
+      "material_improvement": false,
+      "fold_wins": false,
+      "fold_stability": true,
+      "holdout_sample_size": true,
+      "interval_coverage": true,
+      "bootstrap_improvement": false
+    },
+    "quantitative_pass": false,
+    "production_pass": false,
+    "production_blockers": [
+      "exchange calendar and bar publication/completion semantics unverified",
+      "front-month rollover methodology unverified",
+      "current licensed production data provider unavailable",
+      "human production approval not supplied"
+    ]
+  },
+  "regimes": {
+    "low_volatility": {
+      "n": 364,
+      "mae": 14.922086223090405,
+      "rmse": 21.14865994435972,
+      "bias": 4.168656129831666,
+      "smape": 0.8569564155453341,
+      "directional_accuracy": 0.4642857142857143,
+      "balanced_accuracy": 0.3434522881928211,
+      "positive_precision": 0.43564356435643564,
+      "positive_recall": 0.8516129032258064,
+      "return_mae": 0.008558039351146816
+    },
+    "high_volatility": {
+      "n": 338,
+      "mae": 13.378527285038349,
+      "rmse": 18.103148309393276,
+      "bias": 1.2527669413731104,
+      "smape": 0.7752762270619945,
+      "directional_accuracy": 0.5118343195266272,
+      "balanced_accuracy": 0.5059540487531522,
+      "positive_precision": 0.5124555160142349,
+      "positive_recall": 0.8372093023255814,
+      "return_mae": 0.007752873624047978
+    }
+  },
+  "test_start_sensitivity_diagnostic_only": {
+    "0.0": {
+      "n": 702,
+      "mae": 14.178891178843118,
+      "rmse": 19.741039380723887,
+      "bias": 2.764709483536806,
+      "smape": 0.8176289173866891,
+      "directional_accuracy": 0.48717948717948717,
+      "balanced_accuracy": 0.3403267989932033,
+      "positive_precision": 0.4726027397260274,
+      "positive_recall": 0.8440366972477065,
+      "return_mae": 0.008170366964025155
+    },
+    "0.25": {
+      "n": 527,
+      "mae": 13.205798417808378,
+      "rmse": 18.054864794612254,
+      "bias": 1.2336663041648097,
+      "smape": 0.7623500764607939,
+      "directional_accuracy": 0.5009487666034156,
+      "balanced_accuracy": 0.33934589848552793,
+      "positive_precision": 0.4929906542056075,
+      "positive_recall": 0.8210116731517509,
+      "return_mae": 0.007628372709364188
+    },
+    "0.5": {
+      "n": 351,
+      "mae": 13.823553602071229,
+      "rmse": 18.74231966246646,
+      "bias": 2.3942721668060534,
+      "smape": 0.7814301232875227,
+      "directional_accuracy": 0.5042735042735043,
+      "balanced_accuracy": 0.3491782498470146,
+      "positive_precision": 0.48188405797101447,
+      "positive_recall": 0.8109756097560976,
+      "return_mae": 0.0078106784745281075
+    }
+  },
+  "validation_relative_mae": 1.006789930994658,
+  "seconds": 0.04111836599997787,
+  "first_origin": "2026-05-28 13:00:00+00:00",
+  "last_target": "2026-10-16 20:00:00+00:00"
+}

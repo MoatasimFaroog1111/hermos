@@ -1,6 +1,11 @@
+import pytest
+
+pytest.importorskip("pandas", reason="optional platinum research dependencies")
+pytest.importorskip("sklearn", reason="optional platinum research dependencies")
+pytest.importorskip("statsmodels", reason="optional platinum research dependencies")
+pytest.importorskip("lightgbm", reason="optional platinum research dependencies")
 import numpy as np
 import pandas as pd
-import pytest
 
 from platinum_forecasting.validation import expanding_splits, metrics, loss_improvement_interval, acceptance
 from platinum_forecasting.model_research import fit_predict

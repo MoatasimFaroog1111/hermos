@@ -1,8 +1,10 @@
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("pandas", reason="optional platinum research dependencies")
 import numpy as np
 import pandas as pd
-import pytest
 
 from platinum_forecasting.data_audit import clean_bars, read_workbook
 from platinum_forecasting.features import build_features, supervised_samples

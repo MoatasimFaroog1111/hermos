@@ -2,6 +2,11 @@ import json
 
 import pytest
 
+pytest.importorskip("optuna", reason="optional platinum research dependencies")
+pytest.importorskip("pandas", reason="optional platinum research dependencies")
+pytest.importorskip("sklearn", reason="optional platinum research dependencies")
+pytest.importorskip("statsmodels", reason="optional platinum research dependencies")
+pytest.importorskip("lightgbm", reason="optional platinum research dependencies")
 from platinum_forecasting.experiment import write_once, claim_holdout, verify_selection
 from platinum_forecasting.configuration import ResearchConfig
 

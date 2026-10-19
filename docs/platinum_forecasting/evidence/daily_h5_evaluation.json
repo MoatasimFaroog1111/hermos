@@ -1,0 +1,140 @@
+{
+  "status": "evaluated_once",
+  "selection_sha256": "1cec2a0abed21852f9190603087d5781671701e7536b0f40a3f9dd21ad5cde53",
+  "config": {
+    "frequency": "daily",
+    "horizon": 5,
+    "trials": 8,
+    "seed": 20261019,
+    "holdout_fraction": 0.2,
+    "minimum_samples": 500
+  },
+  "champion": "ridge_return",
+  "baseline": "baseline_naive",
+  "holdout": {
+    "n": 1218,
+    "mae": 46.174997545202935,
+    "rmse": 75.24514516807278,
+    "bias": -0.5688780073647735,
+    "smape": 3.5804144353133878,
+    "directional_accuracy": 0.5361247947454844,
+    "balanced_accuracy": 0.5337395704103725,
+    "positive_precision": 0.5552238805970149,
+    "positive_recall": 0.5821596244131455,
+    "return_mae": 0.035918575717571954,
+    "relative_mae": 0.9979443384315451,
+    "interval_coverage": 0.8587848932676518,
+    "mean_interval_width": 147.37066520193196
+  },
+  "baseline_holdout": {
+    "n": 1218,
+    "mae": 46.270113238755904,
+    "rmse": 75.25347661242951,
+    "bias": -2.8412151869098925,
+    "smape": 3.60336338632305,
+    "directional_accuracy": 0.0,
+    "balanced_accuracy": 0.0,
+    "positive_precision": 0.0,
+    "positive_recall": 0.0,
+    "return_mae": 0.0361465829415313
+  },
+  "fold_ratios": [
+    0.9884360963859969,
+    1.0015957883728768,
+    0.9887489409455529
+  ],
+  "bootstrap": {
+    "mean": 0.09511569355297333,
+    "lower": -1.1463341806195364,
+    "upper": 1.2273947556189726,
+    "block_length": 11,
+    "draws": 2000,
+    "method": "moving-block percentile bootstrap, one-sided alpha=.05/5"
+  },
+  "decision": {
+    "checks": {
+      "material_improvement": false,
+      "fold_wins": true,
+      "fold_stability": true,
+      "holdout_sample_size": true,
+      "interval_coverage": true,
+      "bootstrap_improvement": false
+    },
+    "quantitative_pass": false,
+    "production_pass": false,
+    "production_blockers": [
+      "exchange calendar and bar publication/completion semantics unverified",
+      "front-month rollover methodology unverified",
+      "current licensed production data provider unavailable",
+      "human production approval not supplied"
+    ]
+  },
+  "regimes": {
+    "low_volatility": {
+      "n": 204,
+      "mae": 44.201956788970655,
+      "rmse": 68.57861014851686,
+      "bias": -6.700028928714821,
+      "smape": 3.73047073428458,
+      "directional_accuracy": 0.44607843137254904,
+      "balanced_accuracy": 0.441939286766873,
+      "positive_precision": 0.5188679245283019,
+      "positive_recall": 0.4700854700854701,
+      "return_mae": 0.037623693445174265
+    },
+    "high_volatility": {
+      "n": 1014,
+      "mae": 46.571940655924216,
+      "rmse": 76.51619288381804,
+      "bias": 0.6646079768121592,
+      "smape": 3.5502255941002483,
+      "directional_accuracy": 0.5542406311637081,
+      "balanced_accuracy": 0.5526235865806934,
+      "positive_precision": 0.5620567375886525,
+      "positive_recall": 0.60727969348659,
+      "return_mae": 0.03557553428124959
+    }
+  },
+  "test_start_sensitivity_diagnostic_only": {
+    "0.0": {
+      "n": 1218,
+      "mae": 46.174997545202935,
+      "rmse": 75.24514516807278,
+      "bias": -0.5688780073647735,
+      "smape": 3.5804144353133878,
+      "directional_accuracy": 0.5361247947454844,
+      "balanced_accuracy": 0.5337395704103725,
+      "positive_precision": 0.5552238805970149,
+      "positive_recall": 0.5821596244131455,
+      "return_mae": 0.035918575717571954
+    },
+    "0.25": {
+      "n": 914,
+      "mae": 50.70249308869991,
+      "rmse": 83.61523459904636,
+      "bias": -1.3131367997021615,
+      "smape": 3.648710223199165,
+      "directional_accuracy": 0.5284463894967177,
+      "balanced_accuracy": 0.5275406489385777,
+      "positive_precision": 0.5638297872340425,
+      "positive_recall": 0.539714867617108,
+      "return_mae": 0.036628640861027045
+    },
+    "0.5": {
+      "n": 609,
+      "mae": 61.34569742213388,
+      "rmse": 99.36048769708259,
+      "bias": -1.1022707785648111,
+      "smape": 3.924073225871881,
+      "directional_accuracy": 0.5254515599343186,
+      "balanced_accuracy": 0.5234138972809668,
+      "positive_precision": 0.565625,
+      "positive_recall": 0.5468277945619335,
+      "return_mae": 0.03942683866855067
+    }
+  },
+  "validation_relative_mae": 0.9933710353372396,
+  "seconds": 0.052973016999999345,
+  "first_origin": "2021-12-06 00:00:00+00:00",
+  "last_target": "2026-10-16 00:00:00+00:00"
+}

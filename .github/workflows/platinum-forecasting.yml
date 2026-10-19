@@ -1,0 +1,25 @@
+name: Platinum research contracts
+on:
+  pull_request:
+    paths:
+      - 'platinum_forecasting/**'
+      - 'tests/platinum_forecasting/**'
+      - '.github/workflows/platinum-forecasting.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  research-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # 9.0.0
+        with:
+          version: '0.12.23'
+      - name: Install isolated hashed research dependencies
+        run: |
+          uv venv "$RUNNER_TEMP/platinum-venv" --python 3.11
+          uv pip sync --python "$RUNNER_TEMP/platinum-venv/bin/python" --require-hashes platinum_forecasting/requirements.lock
+      - name: Exercise contracts and synthetic end-to-end research
+        run: HERMES_PYTHON="$RUNNER_TEMP/platinum-venv/bin/python" bash scripts/run_tests.sh -j 3 tests/platinum_forecasting

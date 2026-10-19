@@ -153,7 +153,7 @@ def evaluate(workbook: Path, output: Path, config: ResearchConfig) -> dict:
     score.update(relative_mae=relative, interval_coverage=coverage,
                  mean_interval_width=float(np.mean(2*radius)))
     volatility = test[[c for c in test if "volatility_" in c][0]].to_numpy()
-    threshold = float(train[[c for c in train if "volatility_" in c][0]].median().iloc[0])
+    threshold = float(train[[c for c in train if "volatility_" in c][0]].median())
     regimes = {}
     for label, mask in (("low_volatility", volatility<=threshold), ("high_volatility", volatility>threshold)):
         if mask.any():

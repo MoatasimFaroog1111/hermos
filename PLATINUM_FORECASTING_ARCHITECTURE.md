@@ -42,6 +42,11 @@ flowchart TD
 
 ## Research protocol frozen before final scores
 - Separate data and configurations; no cross-frequency feature joins.
+- Pre-holdout discovery adjustment: hourly segments have maximum length 47;
+  use 12-bar hourly warmup and 3/6/10/12 rolling windows, with a six-bar
+  seasonal-naive comparator (a candidate periodicity, not an asserted market
+  season). Daily warmup remains 48. Skip any horizon with <500 usable samples.
+  No outcomes from final evaluation informed this adjustment.
 - Holdout: last 20% of cleaned ordered rows, fixed by index and timestamp in
   a manifest before selection. Three expanding validation windows span the
   preceding 30%. Initial fit uses the first 50%. Purge h origins at each

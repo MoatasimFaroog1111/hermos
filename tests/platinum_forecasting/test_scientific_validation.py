@@ -30,6 +30,13 @@ def test_insufficient_history_fails():
         expanding_splits(samples(40), 32)
 
 
+def test_sparse_eligible_origins_cannot_move_raw_holdout_boundary():
+    s = samples()
+    cutoff = s.timestamp.iloc[398]
+    splits = expanding_splits(s, 400, cutoff)
+    assert all(s.target_timestamp.iloc[valid].max() < cutoff for _, valid in splits)
+
+
 def test_metrics_are_numeric_and_include_zero_direction_as_class():
     m = metrics(np.array([100., 100., 100.]), np.array([101., 99., 100.]), np.array([101., 101., 100.]))
     assert m["mae"] == pytest.approx(2/3)

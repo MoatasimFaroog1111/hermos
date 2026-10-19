@@ -49,8 +49,9 @@ def clean_bars(raw: pd.DataFrame, frequency: Frequency) -> tuple[pd.DataFrame, d
     d = d.drop_duplicates("timestamp").sort_values("timestamp").reset_index(drop=True)
     audit["interval_counts"] = {str(k): int(v) for k, v in d.timestamp.diff().value_counts().items()}
     audit["zero_volume"] = int(d.volume.eq(0).sum())
-    audit["return_spikes_over_15pct"] = int(d.close.pct_change(fill_method=None).abs().gt(.15).sum())
     values = d[columns[1:]].apply(pd.to_numeric, errors="coerce")
+    d[columns[1:]] = values
+    audit["return_spikes_over_15pct"] = int(values.close.pct_change(fill_method=None).abs().gt(.15).sum())
     numeric = np.isfinite(values).all(axis=1) & values[PRICE_COLUMNS].gt(0).all(axis=1) & values.volume.ge(0)
     ohlc = (values.high >= values[["open", "close", "low"]].max(axis=1)) & (values.low <= values[["open", "close", "high"]].min(axis=1))
     grid = d.timestamp.eq(d.timestamp.dt.floor("h" if frequency == "hourly" else "D"))

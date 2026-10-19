@@ -5,16 +5,18 @@ import numpy as np
 import pandas as pd
 
 
-def expanding_splits(samples: pd.DataFrame, holdout_start: int) -> list[tuple[np.ndarray, np.ndarray]]:
+def expanding_splits(samples: pd.DataFrame, holdout_start: int,
+                     holdout_cutoff: pd.Timestamp | None = None) -> list[tuple[np.ndarray, np.ndarray]]:
     if holdout_start < 200:
         raise ValueError("insufficient history for three expanding folds")
     # 50%,60%,70%,80% of the original ordered samples.
     boundaries = np.linspace(int(holdout_start*.625), holdout_start, 4, dtype=int)
+    cutoff = samples.timestamp.iloc[holdout_start] if holdout_cutoff is None else holdout_cutoff
     splits = []
     for left, right in zip(boundaries[:-1], boundaries[1:]):
         train = np.flatnonzero((samples.index < left) & (samples.target_timestamp < samples.timestamp.iloc[left]))
         valid = np.flatnonzero((samples.index >= left) & (samples.index < right) &
-                              (samples.target_timestamp < samples.timestamp.iloc[holdout_start]))
+                              (samples.target_timestamp < cutoff))
         if len(train) < 100 or len(valid) < 20:
             raise ValueError("insufficient purged fold samples")
         splits.append((train, valid))

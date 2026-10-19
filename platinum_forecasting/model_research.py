@@ -23,12 +23,15 @@ def fit_predict(name: str, params: dict, train: pd.DataFrame, evaluation: pd.Dat
         return evaluation[name].to_numpy(float)
     features = sorted(c for c in train if c.startswith("feature__"))
     if name == "arima_return":
-        # ARIMA(1,0,0) on one-bar returns; no cross-gap transition is learned:
-        # each observed feature is a one-bar return inside a continuity segment.
-        # Concatenation estimates stationary parameters only, not serving state.
+        # Fit only the longest contiguous training-origin segment, never splice
+        # missing intervals into adjacent ARIMA observations.
+        contiguous = train
+        if "segment" in train:
+            key = train.groupby("segment").size().idxmax()
+            contiguous = train.loc[train.segment.eq(key)]
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            fitted = ARIMA(train["feature__return_lag_0"].to_numpy(), order=(1, 0, 0), trend="c").fit()
+            fitted = ARIMA(contiguous["feature__return_lag_0"].to_numpy(), order=(1, 0, 0), trend="c").fit()
         mu, phi = float(fitted.params[0]), float(fitted.params[1])
         powers = sum(phi**k for k in range(1, horizon+1))
         expected = horizon*mu + (evaluation["feature__return_lag_0"].to_numpy()-mu)*powers

@@ -55,7 +55,7 @@ def test_hourly_features_never_bridge_unverified_gaps():
     samples = supervised_samples(clean, "hourly", 4)
     assert ((samples.target_timestamp - samples.timestamp) == pd.Timedelta(hours=4)).all()
     gap_start = pd.Timestamp("2025-01-01", tz="UTC") + pd.Timedelta(hours=99)
-    warmup_end = pd.Timestamp("2025-01-01", tz="UTC") + pd.Timedelta(hours=152)
+    warmup_end = pd.Timestamp("2025-01-01", tz="UTC") + pd.Timedelta(hours=116)
     assert not samples.timestamp.between(gap_start, warmup_end).any()
 
 
@@ -84,6 +84,16 @@ def test_schema_rejects_infinite_and_negative_prices():
     clean, audit = clean_bars(raw, "hourly")
     assert audit["invalid_numeric"] == 2
     assert np.isfinite(clean.close).all()
+
+
+def test_text_prices_are_quarantined_and_numeric_strings_normalized():
+    raw = bars().astype({"close": object, "volume": object})
+    raw.loc[30, "close"] = "malformed"
+    raw.loc[40, "volume"] = "100"
+    clean, audit = clean_bars(raw, "hourly")
+    assert audit["invalid_numeric"] == 1
+    assert pd.api.types.is_numeric_dtype(clean.volume)
+    assert np.isfinite(build_features(clean, "hourly").iloc[-1]).all()
 
 
 def test_riyadh_timestamp_must_match_utc(tmp_path: Path):

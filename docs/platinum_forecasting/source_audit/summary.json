@@ -1,0 +1,423 @@
+{
+  "schema_version": "1",
+  "source_sha256": "85e95ef9f4ed48ad8fc55a890bfc4e08c7b386d2e2adc37bb5646fd2e07d63e1",
+  "frozen_at_utc": "2026-10-20T03:57:36.211675+00:00",
+  "production_approved": false,
+  "daily": {
+    "rows": 6586,
+    "invalid_numeric": 0,
+    "ohlc_violations": 473,
+    "open_outside_range": 61,
+    "close_outside_range": 459,
+    "inverted_ranges": 4,
+    "open_and_close_outside": 47,
+    "reason_counts": {
+      "valid_ohlc": 6113,
+      "close_outside_only": 412,
+      "open_and_close_outside": 43,
+      "open_outside_only": 14,
+      "inverted_range": 4
+    },
+    "violations_by_year": {
+      "1999": 32,
+      "2000": 30,
+      "2001": 42,
+      "2002": 42,
+      "2003": 42,
+      "2004": 35,
+      "2005": 44,
+      "2006": 38,
+      "2007": 27,
+      "2008": 29,
+      "2009": 25,
+      "2010": 42,
+      "2011": 45
+    },
+    "close_excursion_usd_oz_quantiles": {
+      "0.0": 0.0999755859375,
+      "0.25": 1.45001220703125,
+      "0.5": 3.199951171875,
+      "0.75": 6.3500213623046875,
+      "1.0": 180.0
+    },
+    "zero_volume": 1776,
+    "duplicates": 0,
+    "outlier_policy": "describe_only_no_winsorization_or_repair",
+    "settlement_mismatch_confirmed": false,
+    "contract_roll_confirmed": false
+  },
+  "hourly": {
+    "rows": 11440,
+    "invalid_numeric": 0,
+    "ohlc_violations": 0,
+    "open_outside_range": 0,
+    "close_outside_range": 0,
+    "inverted_ranges": 0,
+    "open_and_close_outside": 0,
+    "reason_counts": {
+      "valid_ohlc": 11440
+    },
+    "violations_by_year": {},
+    "close_excursion_usd_oz_quantiles": {},
+    "zero_volume": 409,
+    "duplicates": 0,
+    "outlier_policy": "describe_only_no_winsorization_or_repair",
+    "settlement_mismatch_confirmed": false,
+    "contract_roll_confirmed": false
+  },
+  "daily_gaps": {
+    "records": 6586,
+    "nonconsecutive_dates": 1441,
+    "gaps_over_seven_calendar_days": 22,
+    "maximum_calendar_days": 78,
+    "weekday_candidates_not_confirmed_missing": 973,
+    "confirmed_missing_sessions": null,
+    "calendar_verified": false
+  },
+  "hourly_intervals": {
+    "records": 11440,
+    "intervals": 11439,
+    "calendar_verified": false,
+    "regular_template": {
+      "timezone": "America/Chicago",
+      "open_local": "17:00",
+      "close_local": "16:00",
+      "description": "Hypothesis: Sunday-Friday 17:00-to-16:00 CT sessions with maintenance 16:00-17:00; no holidays",
+      "verified_by_official_source": false
+    },
+    "classification_counts": {
+      "one_hour_regular_anchor": 10902,
+      "maintenance_template_consistent_unverified": 392,
+      "weekend_template_consistent_unverified": 88,
+      "unexplained_requires_holiday_or_provider_evidence": 31,
+      "one_hour_half_hour_anchor": 15,
+      "subhour_transition_completion_unknown": 6,
+      "irregular_anchor_gap_requires_provider_evidence": 5
+    },
+    "half_hour_anchor_records": 20,
+    "off_minute_grid_records": 1,
+    "confirmed_missing_bars": null,
+    "open_grid_candidates_total_not_confirmed_missing": 447
+  },
+  "daily_violations_in_hourly_coverage": 0,
+  "unit_conversions": {
+    "daily": {
+      "open": {
+        "status": "checked",
+        "comparable_rows": 6586,
+        "noncomparable_rows": 0,
+        "mismatches": 0,
+        "max_absolute_difference": 3.913548425771296e-06,
+        "factor_tested": 32.15074657
+      },
+      "high": {
+        "status": "checked",
+        "comparable_rows": 6586,
+        "noncomparable_rows": 0,
+        "mismatches": 0,
+        "max_absolute_difference": 3.913548425771296e-06,
+        "factor_tested": 32.15074657
+      },
+      "low": {
+        "status": "checked",
+        "comparable_rows": 6586,
+        "noncomparable_rows": 0,
+        "mismatches": 0,
+        "max_absolute_difference": 3.913548425771296e-06,
+        "factor_tested": 32.15074657
+      },
+      "close": {
+        "status": "checked",
+        "comparable_rows": 6586,
+        "noncomparable_rows": 0,
+        "mismatches": 0,
+        "max_absolute_difference": 3.913548425771296e-06,
+        "factor_tested": 32.15074657
+      }
+    },
+    "hourly": {
+      "open": {
+        "status": "checked",
+        "comparable_rows": 11440,
+        "noncomparable_rows": 0,
+        "mismatches": 0,
+        "max_absolute_difference": 3.998895408585668e-06,
+        "factor_tested": 32.15074657
+      },
+      "high": {
+        "status": "checked",
+        "comparable_rows": 11440,
+        "noncomparable_rows": 0,
+        "mismatches": 0,
+        "max_absolute_difference": 4.0131708374246955e-06,
+        "factor_tested": 32.15074657
+      },
+      "low": {
+        "status": "checked",
+        "comparable_rows": 11440,
+        "noncomparable_rows": 0,
+        "mismatches": 0,
+        "max_absolute_difference": 3.9309816202148795e-06,
+        "factor_tested": 32.15074657
+      },
+      "close": {
+        "status": "checked",
+        "comparable_rows": 11440,
+        "noncomparable_rows": 0,
+        "mismatches": 0,
+        "max_absolute_difference": 4.000408807769418e-06,
+        "factor_tested": 32.15074657
+      }
+    }
+  },
+  "prospective_policy": {
+    "status": "awaiting_new_unseen_completed_observations",
+    "new_holdout_after_exclusive": "2026-10-20T03:57:40.120238+00:00",
+    "existing_workbook_eligible_for_new_final_test": false,
+    "minimum_holdout_observations_per_horizon": 200,
+    "completion_requirement": "bar availability and completion after cutoff; targets must also be after cutoff",
+    "promotion_allowed": false,
+    "release_requirements": [
+      "authoritative session and holiday calendar",
+      "verified Yahoo or replacement provider publication/roll semantics",
+      "separate temporal development and sealed final data",
+      "preregistered model, feature and quantitative gates",
+      "human production approval"
+    ]
+  },
+  "source_access": {
+    "cme_contract": {
+      "url": "https://www.cmegroup.com/markets/metals/precious/platinum.contractSpecs.html",
+      "observed_at_utc": "2026-10-20T03:57:38.130488+00:00",
+      "authoritative_content_verified": false,
+      "http_status": 200,
+      "bytes": 240181,
+      "content_sha256": "be21f6c79c67b0ac0e78fad2b98d5809ab39b16ecdbc03e33709eef54098f5f7",
+      "status": "retrieved_review_required"
+    },
+    "cme_specs": {
+      "url": "https://www.cmegroup.com/CmeWS/mvc/ContractSpecs/List/productId/446",
+      "observed_at_utc": "2026-10-20T03:57:38.276317+00:00",
+      "authoritative_content_verified": true,
+      "http_status": 200,
+      "bytes": 3274,
+      "content_sha256": "40393f27aff5020cc4c8348dc64d03334cb08ccd9e6de8757e8634ceec9012a0",
+      "status": "retrieved_review_required",
+      "contract_metadata": {
+        "official_fields": {
+          "ProductID": 446,
+          "ProductName": "Platinum Futures",
+          "ContractUnit": "50 troy ounces",
+          "PriceQuotation": "U.S. dollars and cents per troy ounce",
+          "TradingHours": {
+            "vandhr": [
+              {
+                "hours": "Sunday 5:00 p.m. - Friday 4:00 p.m. CT with no reporting Monday - Thursday from 4:00 p.m.  -  5:00 p.m. CT",
+                "venue": "CME ClearPort:"
+              },
+              {
+                "hours": "Sunday - Friday 6:00 p.m. - 5:00 p.m. (5:00 p.m. - 4:00 p.m. CT) with a 60-minute break each day beginning at 5:00 p.m. (4:00 p.m. CT)<br />\n<br />\nTAS:&nbsp;Sunday - Friday 6:00 p.m. - 1:05 p.m. (5:00 p.m. - 12:05 p.m. CT)",
+                "venue": "CME Globex:"
+              }
+            ]
+          },
+          "SettlementMethod": "Deliverable",
+          "TerminationOfTrading": {
+            "terminationOfTrading": [
+              {
+                "type": "Default:",
+                "termsOfTrading": "Trading terminates on the third last business day of the contract month."
+              }
+            ]
+          },
+          "SettlementProcedures": "<a href=\"https://www.cmegroup.com/confluence/display/EPICSANDBOX/Platinum\" target=\"_blank\">Platinum Futures Settlement Procedures</a>",
+          "ExchangeRulebook": "<a href=\"https://www.cmegroup.com/rulebook/NYMEX/1a/105.pdf\" target=\"_blank\">NYMEX 105</a>"
+        },
+        "historical_holiday_calendar_verified": false,
+        "yahoo_roll_methodology_verified": false,
+        "warning": "Current exchange specifications are not a historical holiday calendar or a Yahoo continuous-contract policy."
+      }
+    },
+    "cme_holidays": {
+      "url": "https://www.cmegroup.com/tools-information/holiday-calendar.html",
+      "observed_at_utc": "2026-10-20T03:57:38.463153+00:00",
+      "authoritative_content_verified": false,
+      "http_status": 200,
+      "bytes": 236103,
+      "content_sha256": "2231a13c0b80894dd744ef3107003ab4cf42d7cb53830496d73ce2d27678cf20",
+      "status": "retrieved_review_required"
+    },
+    "cme_settlement": {
+      "url": "https://www.cmegroup.com/confluence/display/EPICSANDBOX/Platinum",
+      "observed_at_utc": "2026-10-20T03:57:38.792345+00:00",
+      "authoritative_content_verified": false,
+      "status": "proxy_or_transport_failure",
+      "http_status": null
+    },
+    "yahoo_quote": {
+      "url": "https://finance.yahoo.com/quote/PL%3DF/",
+      "observed_at_utc": "2026-10-20T03:57:38.856637+00:00",
+      "authoritative_content_verified": false,
+      "http_status": 200,
+      "bytes": 1042475,
+      "content_sha256": "cc303b5c4492529f44b4e9e60247531f6a78e4c743bb07b6199a135cae27ffb4",
+      "status": "retrieved_review_required"
+    },
+    "yahoo_chart": {
+      "url": "https://query1.finance.yahoo.com/v8/finance/chart/PL%3DF?range=5d&interval=1d",
+      "observed_at_utc": "2026-10-20T03:57:39.390144+00:00",
+      "authoritative_content_verified": false,
+      "http_status": 200,
+      "bytes": 1669,
+      "content_sha256": "f0fe8210c2edd08ad6634ec33e38b6345eb90436d194999babd5184cc014a2c6",
+      "status": "retrieved_review_required",
+      "chart_metadata": {
+        "vendor_metadata": {
+          "symbol": "PL=F",
+          "currency": "USD",
+          "instrumentType": "FUTURE",
+          "exchangeTimezoneName": "America/New_York",
+          "exchangeName": "NYM",
+          "firstTradeDate": 878101200,
+          "regularMarketTime": 1792468034,
+          "dataGranularity": "1d",
+          "priceHint": 2
+        },
+        "last_chart_timestamp_utc": "2026-10-20T03:47:14+00:00",
+        "bar_completion_verified": false,
+        "roll_methodology_verified": false,
+        "license_verified": false,
+        "warning": "Vendor metadata and timezone labels do not certify bar availability, settlement definition or rollover."
+      }
+    }
+  },
+  "provider_window_comparisons": [
+    {
+      "window": "first_anomaly",
+      "url": "https://query1.finance.yahoo.com/v8/finance/chart/PL%3DF?period1=915753600&period2=916704000&interval=1d",
+      "start": "1999-01-08T00:00:00+00:00",
+      "end_exclusive": "1999-01-19T00:00:00+00:00",
+      "status": "compared",
+      "response_sha256": "79214462c5be44d85dc1e2d3bfd2309eabaeba5735054d12fb8dd01bdd8cb930",
+      "comparison": {
+        "shared_dates": 6,
+        "all_ohlc_identical_rows": 6,
+        "workbook_ohlc_anomalies_reproduced": 3,
+        "per_column_mismatches": {
+          "open": 0,
+          "high": 0,
+          "low": 0,
+          "close": 0
+        },
+        "vendor_nonfinite_rows": 0,
+        "vendor_only_dates_in_requested_window": 1,
+        "date_alignment": "UTC calendar labels; not certified settlement/session availability",
+        "settlement_cause_verified": false,
+        "repairs_applied": 0
+      },
+      "chart_metadata": {
+        "vendor_metadata": {
+          "symbol": "PL=F",
+          "currency": "USD",
+          "instrumentType": "FUTURE",
+          "exchangeTimezoneName": "America/New_York",
+          "exchangeName": "NYM",
+          "firstTradeDate": 878101200,
+          "regularMarketTime": 1792468034,
+          "dataGranularity": "1d",
+          "priceHint": 2
+        },
+        "last_chart_timestamp_utc": "1999-01-18T05:00:00+00:00",
+        "bar_completion_verified": false,
+        "roll_methodology_verified": false,
+        "license_verified": false,
+        "warning": "Vendor metadata and timezone labels do not certify bar availability, settlement definition or rollover."
+      }
+    },
+    {
+      "window": "last_anomaly",
+      "url": "https://query1.finance.yahoo.com/v8/finance/chart/PL%3DF?period1=1319673600&period2=1320624000&interval=1d",
+      "start": "2011-10-27T00:00:00+00:00",
+      "end_exclusive": "2011-11-07T00:00:00+00:00",
+      "status": "compared",
+      "response_sha256": "25b29d6ce370627909805d9c970dd4da55189541b3bbb0292c664216cd82b4b0",
+      "comparison": {
+        "shared_dates": 7,
+        "all_ohlc_identical_rows": 7,
+        "workbook_ohlc_anomalies_reproduced": 2,
+        "per_column_mismatches": {
+          "open": 0,
+          "high": 0,
+          "low": 0,
+          "close": 0
+        },
+        "vendor_nonfinite_rows": 0,
+        "vendor_only_dates_in_requested_window": 0,
+        "date_alignment": "UTC calendar labels; not certified settlement/session availability",
+        "settlement_cause_verified": false,
+        "repairs_applied": 0
+      },
+      "chart_metadata": {
+        "vendor_metadata": {
+          "symbol": "PL=F",
+          "currency": "USD",
+          "instrumentType": "FUTURE",
+          "exchangeTimezoneName": "America/New_York",
+          "exchangeName": "NYM",
+          "firstTradeDate": 878101200,
+          "regularMarketTime": 1792468034,
+          "dataGranularity": "1d",
+          "priceHint": 2
+        },
+        "last_chart_timestamp_utc": "2011-11-04T04:00:00+00:00",
+        "bar_completion_verified": false,
+        "roll_methodology_verified": false,
+        "license_verified": false,
+        "warning": "Vendor metadata and timezone labels do not certify bar availability, settlement definition or rollover."
+      }
+    },
+    {
+      "window": "largest_gap",
+      "url": "https://query1.finance.yahoo.com/v8/finance/chart/PL%3DF?period1=1082851200&period2=1090022400&interval=1d",
+      "start": "2004-04-25T00:00:00+00:00",
+      "end_exclusive": "2004-07-17T00:00:00+00:00",
+      "status": "compared",
+      "response_sha256": "c1b2e92da5f69ee5dd5d5d27e6649050b11a35c362c3f6ab9bbab77b7cd3ebb8",
+      "comparison": {
+        "shared_dates": 5,
+        "all_ohlc_identical_rows": 5,
+        "workbook_ohlc_anomalies_reproduced": 3,
+        "per_column_mismatches": {
+          "open": 0,
+          "high": 0,
+          "low": 0,
+          "close": 0
+        },
+        "vendor_nonfinite_rows": 0,
+        "vendor_only_dates_in_requested_window": 55,
+        "date_alignment": "UTC calendar labels; not certified settlement/session availability",
+        "settlement_cause_verified": false,
+        "repairs_applied": 0
+      },
+      "chart_metadata": {
+        "vendor_metadata": {
+          "symbol": "PL=F",
+          "currency": "USD",
+          "instrumentType": "FUTURE",
+          "exchangeTimezoneName": "America/New_York",
+          "exchangeName": "NYM",
+          "firstTradeDate": 878101200,
+          "regularMarketTime": 1792468034,
+          "dataGranularity": "1d",
+          "priceHint": 2
+        },
+        "last_chart_timestamp_utc": "2004-07-16T04:00:00+00:00",
+        "bar_completion_verified": false,
+        "roll_methodology_verified": false,
+        "license_verified": false,
+        "warning": "Vendor metadata and timezone labels do not certify bar availability, settlement definition or rollover."
+      }
+    }
+  ],
+  "source_review_completed_at_utc": "2026-10-20T03:57:40.120238+00:00"
+}

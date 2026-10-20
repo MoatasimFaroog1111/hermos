@@ -1,0 +1,15 @@
+{
+  "status": "awaiting_new_unseen_completed_observations",
+  "new_holdout_after_exclusive": "2026-10-20T03:57:40.120238+00:00",
+  "existing_workbook_eligible_for_new_final_test": false,
+  "minimum_holdout_observations_per_horizon": 200,
+  "completion_requirement": "bar availability and completion after cutoff; targets must also be after cutoff",
+  "promotion_allowed": false,
+  "release_requirements": [
+    "authoritative session and holiday calendar",
+    "verified Yahoo or replacement provider publication/roll semantics",
+    "separate temporal development and sealed final data",
+    "preregistered model, feature and quantitative gates",
+    "human production approval"
+  ]
+}

@@ -4,6 +4,8 @@ on:
     paths:
       - 'platinum_forecasting/**'
       - 'tests/platinum_forecasting/**'
+      - 'scripts/platinum_data_audit/**'
+      - 'tests/platinum_data_audit/**'
       - '.github/workflows/platinum-forecasting.yml'
   workflow_dispatch:
 permissions:
@@ -22,4 +24,4 @@ jobs:
           uv venv "$RUNNER_TEMP/platinum-venv" --python 3.11
           uv pip sync --python "$RUNNER_TEMP/platinum-venv/bin/python" --require-hashes platinum_forecasting/requirements.lock
       - name: Exercise contracts and synthetic end-to-end research
-        run: HERMES_PYTHON="$RUNNER_TEMP/platinum-venv/bin/python" bash scripts/run_tests.sh -j 3 tests/platinum_forecasting
+        run: HERMES_PYTHON="$RUNNER_TEMP/platinum-venv/bin/python" bash scripts/run_tests.sh -j 3 tests/platinum_forecasting tests/platinum_data_audit

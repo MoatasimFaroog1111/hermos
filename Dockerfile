@@ -259,6 +259,9 @@ COPY pyproject.toml uv.lock ./
 RUN touch ./README.md
 RUN uv sync --frozen --no-install-project --extra all --extra messaging --extra anthropic --extra bedrock --extra azure-identity --extra hindsight --extra matrix
 
+# Isolated Luma social publisher dependency (core requests/dotenv already pinned).
+RUN uv pip install --no-cache-dir tweepy==4.17.0
+
 # ---------- Frontend build (cached independently from Python source) ----------
 # Copy only the frontend source trees first so that Python-only changes don't
 # invalidate the (relatively slow) web + ui-tui build layer.

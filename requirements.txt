@@ -1,0 +1,6 @@
+# Luma publisher dependencies; core Hermes is managed by pyproject.toml and uv.lock.
+# Use this file for a dedicated publisher environment, not as a replacement
+# for the main Hermes uv sync / production build.
+requests==2.33.0
+python-dotenv==1.2.2
+tweepy==4.17.0

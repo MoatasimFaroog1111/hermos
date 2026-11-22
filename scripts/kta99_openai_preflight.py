@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 import yaml
 
@@ -35,14 +35,20 @@ def inspect(config_path: Path, environment: dict[str, str], *, probe: bool = Fal
 
     custom_endpoint = environment.get("OPENAI_BASE_URL", "").strip()
     if custom_endpoint:
-        parsed = urlsplit(custom_endpoint)
-        status["openai_endpoint_safe"] = (
-            parsed.scheme == "https"
-            and parsed.hostname == OPENAI_HOST
-            and parsed.port in (None, 443)
-            and parsed.username is None
-            and parsed.password is None
-        )
+        try:
+            parsed = urlsplit(custom_endpoint)
+            status["openai_endpoint_safe"] = (
+                parsed.scheme == "https"
+                and parsed.hostname == OPENAI_HOST
+                and parsed.port in (None, 443)
+                and parsed.username is None
+                and parsed.password is None
+                and parsed.path.rstrip("/") in ("", "/v1")
+                and not parsed.query
+                and not parsed.fragment
+            )
+        except ValueError:
+            status["openai_endpoint_safe"] = False
 
     try:
         data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -67,7 +73,7 @@ def inspect(config_path: Path, environment: dict[str, str], *, probe: bool = Fal
     if probe:
         # Explicitly contact only OpenAI's official API host; do not follow
         # redirects which could forward Authorization to another endpoint.
-        class NoRedirects(__import__("urllib.request", fromlist=["HTTPRedirectHandler"]).HTTPRedirectHandler):
+        class NoRedirects(HTTPRedirectHandler):
             def redirect_request(self, request, fp, code, msg, headers, newurl):
                 return None
 
@@ -76,7 +82,7 @@ def inspect(config_path: Path, environment: dict[str, str], *, probe: bool = Fal
             headers={"Authorization": "Bearer " + environment["OPENAI_API_KEY"].strip()},
         )
         try:
-            opener = __import__("urllib.request", fromlist=["build_opener"]).build_opener(NoRedirects)
+            opener = build_opener(NoRedirects)
             with opener.open(req, timeout=12) as response:
                 status["probe_result"] = "ok" if response.status == 200 else "unexpected_status"
         except HTTPError as exc:

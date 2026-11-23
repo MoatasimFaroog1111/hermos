@@ -8,7 +8,15 @@ configuration is changed by this PR.
 
 - Bot: @KTA99bot uses the Hermes Telegram gateway.
 - Repository: MoatasimFaroog1111/hermos, default branch main.
-- Fly app in fly.toml / deploy workflow: hermos-moatasim.
+- Fly app referenced by fly.toml: hermos-moatasim, **but this app is not yet
+  verified as the active @KTA99bot instance**.
+- A prior verified Telegram deployment ran on Hetzner server hermos-01
+  (37.27.152.4) in container hermes-app-1. As of 2026-11-23, the Hetzner
+  server is running, but its container/gateway could not be read over SSH.
+- The Fly dashboard shows a running machine, while live /api/status reported
+  zero configured/connected messaging platforms. Fly showed no OpenAI or
+  Telegram key among its listed runtime secrets. Do not switch Fly merely
+  because the repository's fly.toml targets it.
 - Hermes supports provider `openai-api` via OpenAI Responses API.
 - Hermes supports provider `deepseek` and `/model` with `--global`,
   `--session`, and `--provider` options. No gateway fork is needed.
@@ -17,10 +25,16 @@ configuration is changed by this PR.
 
 ## Safety prerequisites
 
-1. Confirm the Fly app and bot are healthy, and record live model + provider.
-2. On Fly, add `OPENAI_API_KEY` as a **runtime secret**; do not place it in
+1. Locate the **active** Telegram poller/container first. Check the
+   Hetzner hermos-01 Docker deployment and confirm its logs show @KTA99bot
+   connected. Stop if no Telegram platform is configured or the host is
+   ambiguous; never start a second poller with the same bot token.
+2. On the confirmed active host, add `OPENAI_API_KEY` as a **runtime secret**; do not place it in
    code, GitHub commits, chat, PR comments, shell history, or a public file.
-   Ensure API billing/model access is enabled. If using a nonstandard
+   For Fly hosts, use fly secrets; for the Hetzner Docker host, use its
+   established protected runtime .env/secret store (without overwriting
+   existing keys). Ensure API billing/model access is enabled. If using
+   a nonstandard
    `OPENAI_BASE_URL`, stop: this procedure is for direct OpenAI only.
 3. Keep the existing `DEEPSEEK_API_KEY` / provider configuration intact.
 4. Confirm whether this gateway serves channels beyond Telegram. The
@@ -36,7 +50,7 @@ This repo includes `scripts/kta99_openai_preflight.py`, designed to run
 *inside the deployed Hermes runtime* once the script is in that image.
 
 ```bash
-# On the Fly machine/container with the same HERMES_HOME and environment
+# On the verified Telegram machine/container with the same HERMES_HOME and environment
 # as the running gateway. The command prints flags, never credential values.
 python /opt/hermes/scripts/kta99_openai_preflight.py --probe-api
 ```
@@ -87,13 +101,14 @@ replacing Hermes, changing tools, or touching the Telegram token:
 
 If your actual recorded prior model was different, restore that exact pair.
 If the gateway fails to respond, restore the secured pre-cutover
-`config.yaml` from inside the Fly machine and restart only the gateway
+`config.yaml` from inside the active machine and restart only the gateway
 under its normal supervisor. Do not redeploy a different code revision
-as the first rollback action.
+as the first rollback action. If root/container access is unavailable, do not
+attempt a global switch via an unrelated gateway.
 
 ## Acceptance checklist
 
-- [ ] Fly app healthy before and after.
+- [ ] Confirmed @KTA99bot host healthy before and after (not merely the Fly app).
 - [ ] Telegram bot replies normally; no duplicate polling/gateway instances.
 - [ ] The first OpenAI answer identifies the configured provider/model.
 - [ ] A read-only tool call succeeds under the existing authorization rules.

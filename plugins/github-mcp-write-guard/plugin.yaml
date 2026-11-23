@@ -1,5 +1,5 @@
 name: github-mcp-write-guard
-version: "1.0.0"
+version: "1.1.0"
 description: "Require human approval for GitHub MCP mutations while allowing reads; hard-block repository/file deletion and repository creation/forking."
 author: "Guardian / Athmar"
 hooks:

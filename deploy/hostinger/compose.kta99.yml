@@ -1,0 +1,44 @@
+# @KTA99bot Hostinger target. No services start on default "docker compose up".
+# PRE-CUTOVER: keep the source Telegram poller running; do NOT start this profile.
+name: athmar-kta99
+
+services:
+  hermes:
+    profiles: ["cutover"]
+    image: athmar-kta99-hermes:staged
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: "no"
+    env_file:
+      - path: /opt/athmar-hermes-migration/secrets.env
+        required: false
+    environment:
+      PORT: "9119"
+      HERMES_DASHBOARD: "1"
+      HERMES_DASHBOARD_HOST: "0.0.0.0"
+      HERMES_DASHBOARD_PORT: "9119"
+      HERMES_REQUIRED_BUNDLED_DASHBOARD_PLUGINS: "hermes-avatar,accounting_brain"
+    command:
+      - sh
+      - -ec
+      - |
+        if [ "$$KTA99_MIGRATION_ARMED" != "yes" ]; then
+          echo "KTA99 cutover not armed: refusing to start the Telegram gateway" >&2
+          exit 78
+        fi
+        exec hermes gateway run
+    ports:
+      - "127.0.0.1:9119:9119"
+    volumes:
+      - type: bind
+        source: /opt/athmar-hermes-migration/data
+        target: /opt/data
+    mem_limit: 3g
+    cpus: 1.5
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9119/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
